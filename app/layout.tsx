@@ -3,8 +3,8 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
+  title: 'SuperChat — Think better, together',
+  description: 'A calm, capable AI workspace for exploring ideas and solving hard problems.',
   generator: 'v0.app',
   icons: {
     icon: [
