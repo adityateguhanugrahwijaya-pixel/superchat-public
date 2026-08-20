@@ -7,6 +7,7 @@ import { Bot, Check, ChevronDown, Copy, Menu, MessageSquarePlus, MoreHorizontal,
 
 type Chat = { id: string; title: string; systemPrompt: string; model: string; updatedAt?: string }
 type Message = { id?: string; role: 'user' | 'assistant'; content: string }
+type Usage = { used: string | number; dailyLimit: string | number; plan: string }
 
 const fallbackModels = [{ id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' }]
 
@@ -20,10 +21,12 @@ export function SuperChat() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
+  const [usage, setUsage] = useState<Usage>({ used: 0, dailyLimit: 2000000, plan: 'Free' })
 
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeId), [chats, activeId])
 
   useEffect(() => {
+    fetch('/api/usage').then((r) => r.ok ? r.json() : null).then((data) => data && setUsage(data)).catch(() => {})
     Promise.all([fetch('/api/chats').then((r) => r.json()), fetch('/api/models').then((r) => r.ok ? r.json() : fallbackModels)])
       .then(([loadedChats, loadedModels]) => { setChats(loadedChats); setModels(loadedModels.length ? loadedModels : fallbackModels); if (loadedChats[0]) setActiveId(loadedChats[0].id) })
       .catch(() => {})
@@ -73,7 +76,7 @@ export function SuperChat() {
       <button className="new-chat-button" onClick={createChat}><MessageSquarePlus size={18} /> New conversation <span>⌘ K</span></button>
       <div className="history-label">Your conversations <span>{chats.length}</span></div>
       <nav className="chat-history" aria-label="Chat history">{chats.map((chat) => <div key={chat.id} className={`history-item ${chat.id === activeId ? 'active' : ''}`}><button onClick={() => { setActiveId(chat.id); setSidebarOpen(false) }}><MessageSquarePlus size={15} /><span>{chat.title}</span></button><div className="history-actions"><button onClick={() => renameChat(chat)} aria-label="Rename chat"><Pencil size={14} /></button><button onClick={() => deleteChat(chat.id)} aria-label="Delete chat"><Trash2 size={14} /></button></div></div>)}</nav>
-      <div className="sidebar-footer"><div className="profile-dot">S</div><div><strong>SuperChat</strong><small>Personal workspace</small></div><MoreHorizontal size={17} className="footer-more" /></div>
+      <div className="sidebar-footer"><div className="profile-dot">S</div><div className="sidebar-account"><strong>SuperChat · {usage.plan}</strong><small>{Number(usage.used).toLocaleString()} / {Number(usage.dailyLimit).toLocaleString()} tokens today</small><div className="usage-track"><span style={{ width: `${Math.min(100, (Number(usage.used) / Math.max(1, Number(usage.dailyLimit))) * 100)}%` }} /></div></div><a href="/settings" className="footer-more" aria-label="Account settings"><Settings2 size={17} /></a></div>
     </aside>
     {sidebarOpen && <button className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-label="Close menu" />}
     <section className="chat-main">
