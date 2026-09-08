@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   }
   const history = await db.execute(sql`SELECT role, content FROM messages WHERE chat_id = ${chatId} AND user_id = ${owner} ORDER BY created_at ASC`)
   const messages = [
-    ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+    { role: 'system', content: systemPrompt },
     ...history.rows.map((message) => ({ role: String(message.role), content: String(message.content) })),
     { role: 'user', content },
   ]
