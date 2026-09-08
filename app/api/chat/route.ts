@@ -10,6 +10,9 @@ export async function POST(request: NextRequest) {
   const chatId = String(body.chatId || '')
   const content = String(body.content || '').trim()
   const model = String(body.model || '')
+  const temperature = Math.min(2, Math.max(0, Number(body.temperature ?? 0.7)))
+  const topP = Math.min(1, Math.max(0, Number(body.topP ?? 1)))
+  const maxTokens = Math.min(32768, Math.max(256, Math.floor(Number(body.maxTokens ?? 4096))))
   if (!chatId || !content || !model) return NextResponse.json({ error: 'chatId, content, and model are required' }, { status: 400 })
 
   const chatResult = await db.execute(sql`SELECT system_prompt as "systemPrompt" FROM chats WHERE id = ${chatId} AND user_id = ${owner}`)
@@ -36,7 +39,7 @@ export async function POST(request: NextRequest) {
   const upstream = await fetch('https://router.bynara.id/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.BYNARA_API_KEY}` },
-    body: JSON.stringify({ model, messages, stream: true }),
+    body: JSON.stringify({ model, messages, stream: true, temperature, top_p: topP, max_tokens: maxTokens }),
   })
   if (!upstream.ok || !upstream.body) return NextResponse.json({ error: 'The model router could not respond' }, { status: upstream.status || 502 })
 
