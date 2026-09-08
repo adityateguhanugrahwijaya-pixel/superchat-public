@@ -2,22 +2,35 @@ import { betterAuth } from 'better-auth'
 import { Pool } from 'pg'
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
-const baseURL = process.env.BETTER_AUTH_URL
-  ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined)
-  ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)
-  ?? process.env.V0_RUNTIME_URL
-  ?? process.env.V0_DEV_APP_URL
-  ?? 'http://localhost:3000'
+
+function nonEmpty(value: string | undefined) {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
+function originFromHost(value: string | undefined) {
+  const host = nonEmpty(value)
+  return host ? `https://${host}` : undefined
+}
+
+const baseURL =
+  nonEmpty(process.env.BETTER_AUTH_URL) ??
+  originFromHost(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
+  originFromHost(process.env.VERCEL_URL) ??
+  nonEmpty(process.env.V0_RUNTIME_URL) ??
+  nonEmpty(process.env.V0_DEV_APP_URL) ??
+  'http://localhost:3000'
 
 const origins = [
   'http://localhost:3000',
-  process.env.V0_RUNTIME_URL,
-  process.env.V0_DEV_APP_URL,
-  process.env.V0_BUILD_URL,
-  process.env.V0_SANDBOX_URL,
-  process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
-  process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined,
-].filter(Boolean) as string[]
+  nonEmpty(process.env.V0_RUNTIME_URL),
+  nonEmpty(process.env.V0_DEV_APP_URL),
+  nonEmpty(process.env.V0_BUILD_URL),
+  nonEmpty(process.env.V0_SANDBOX_URL),
+  originFromHost(process.env.VERCEL_URL),
+  originFromHost(process.env.VERCEL_PROJECT_PRODUCTION_URL),
+].filter((origin): origin is string => Boolean(origin))
+
 
 export const auth = betterAuth({
   database: pool,
