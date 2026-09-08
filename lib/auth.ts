@@ -2,7 +2,12 @@ import { betterAuth } from 'better-auth'
 import { Pool } from 'pg'
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
-const baseURL = process.env.BETTER_AUTH_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)
+const baseURL = process.env.BETTER_AUTH_URL
+  ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined)
+  ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)
+  ?? process.env.V0_RUNTIME_URL
+  ?? process.env.V0_DEV_APP_URL
+  ?? 'http://localhost:3000'
 
 const origins = [
   'http://localhost:3000',
