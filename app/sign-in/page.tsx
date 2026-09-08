@@ -14,11 +14,24 @@ export default function SignInPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    setPending(true); setError('')
-    const result = await authClient.signIn.email({ email, password })
-    if (result.error) setError('Unable to sign in. Check your details and try again.')
-    else { router.push('/'); router.refresh() }
-    setPending(false)
+    setPending(true)
+    setError('')
+    try {
+      const result = await authClient.signIn.email({ email: email.trim(), password })
+      if (result.error) {
+        setError(result.error.code === 'INVALID_EMAIL_OR_PASSWORD'
+          ? 'Email or password is incorrect.'
+          : 'Sign-in is temporarily unavailable. Please try again.')
+      } else {
+        router.push('/')
+        router.refresh()
+      }
+    } catch (error) {
+      console.log('[v0] Sign-in request failed:', error)
+      setError('Sign-in is temporarily unavailable. Please try again.')
+    } finally {
+      setPending(false)
+    }
   }
 
   return <main className="auth-page"><form className="auth-card" onSubmit={submit}>

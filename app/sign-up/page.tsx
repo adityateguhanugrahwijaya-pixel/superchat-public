@@ -7,6 +7,26 @@ import { authClient } from '@/lib/auth-client'
 
 export default function SignUpPage() {
   const router = useRouter(); const [name, setName] = useState(''); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [pending, setPending] = useState(false)
-  async function submit(event: FormEvent) { event.preventDefault(); setPending(true); setError(''); const result = await authClient.signUp.email({ name, email, password }); if (result.error) setError('Unable to create your account. Check your details and try again.'); else { router.push('/'); router.refresh() }; setPending(false) }
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setPending(true)
+    setError('')
+    try {
+      const result = await authClient.signUp.email({ name: name.trim(), email: email.trim(), password })
+      if (result.error) {
+        setError(result.error.code === 'USER_ALREADY_EXISTS'
+          ? 'An account with this email already exists. Sign in instead.'
+          : 'Unable to create your account. Check your details and try again.')
+      } else {
+        router.push('/')
+        router.refresh()
+      }
+    } catch (error) {
+      console.log('[v0] Sign-up request failed:', error)
+      setError('Account creation is temporarily unavailable. Please try again.')
+    } finally {
+      setPending(false)
+    }
+  }
   return <main className="auth-page"><form className="auth-card" onSubmit={submit}><p className="eyebrow">SUPERCHAT</p><h1>Create your account</h1><p className="auth-subtitle">Your private AI workspace starts here.</p><label>Name<input value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" /></label><label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" /></label><label>Password<input type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password" /></label>{error && <p className="form-error">{error}</p>}<button className="primary-button" disabled={pending}>{pending ? 'Creating…' : 'Create account'}</button><p className="auth-footer">Already have an account? <Link href="/sign-in">Sign in</Link></p></form></main>
 }
