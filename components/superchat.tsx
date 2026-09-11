@@ -1,94 +1,832 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { POPULAR_PROMPT_PRESETS } from '@/lib/presets'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Bot, Check, ChevronDown, Copy, Menu, MessageSquarePlus, MoreHorizontal, PanelLeft, Pencil, Send, Settings2, Sparkles, Trash2, X } from 'lucide-react'
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  FileText,
+  Globe,
+  Mic,
+  MessageSquarePlus,
+  PanelLeft,
+  Paperclip,
+  Pencil,
+  Send,
+  Settings2,
+  Sparkles,
+  Trash2,
+  X,
+  BookOpen
+} from 'lucide-react'
 
 type Chat = { id: string; title: string; systemPrompt: string; model: string; updatedAt?: string }
 type Message = { id?: string; role: 'user' | 'assistant'; content: string }
-type Usage = { used: string | number; dailyLimit: string | number; plan: string }
+type Usage = {
+  used: string | number
+  dailyLimit: string | number
+  plan: string
+  routerUrl?: string
+  isCustom?: boolean
+  userName?: string
+  userEmail?: string
+}
+type AttachedFile = { name: string; content: string; size: number }
 
-const fallbackModels = [{ id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' }]
+function getUserInitials(name?: string, email?: string): string {
+  if (name && name.trim()) {
+    const parts = name.trim().split(/\s+/)
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    }
+    return parts[0].slice(0, 2).toUpperCase()
+  }
+  if (email && email.trim()) {
+    const main = email.split('@')[0]
+    return main.slice(0, 2).toUpperCase()
+  }
+  return 'SC'
+}
 
-export function SuperChat() {
+function SuperChatLogo({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M17.5 7C16.2 5.2 14.2 4 12 4C8.7 4 6 6.3 6 9.3C6 14.5 18 12.5 18 17.7C18 20.7 15.3 23 12 23C9.8 23 7.8 21.8 6.5 20"
+        stroke="currentColor"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="18.5" cy="4.5" r="1.5" fill="currentColor" />
+    </svg>
+  )
+}
+
+
+
+const fallbackModels = [
+  { id: 'agnes-2.5-flash', name: 'Agnes 2.5 Flash' },
+  { id: 'deepseek-v4-flash', name: 'DeepSeek v4 Flash' },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek v4 Pro' },
+]
+
+
+const PRESET_PROMPTS = [
+  { id: 'code-review', name: 'Code Reviewer', description: 'Deep review for correctness, security & performance', prompt: 'Perform a comprehensive code review focusing on correctness, performance, security, and edge cases.' },
+  { id: 'architect', name: 'System Architect', description: 'Scalable system architecture and design patterns', prompt: 'Act as a Lead Systems Architect. Design a scalable, high-performance architecture with diagram recommendations.' },
+  { id: 'debugger', name: 'Bug Hunter', description: 'Debug code step by step & explain root cause', prompt: 'Help debug this issue line by line, explain the root cause, and provide fixed code.' },
+  { id: 'tech-writer', name: 'Technical Writer', description: 'Polished, crystal-clear documentation', prompt: 'Refine and polish this technical documentation to make it crystal clear, concise, and well-structured.' },
+  { id: 'brainstorm', name: 'Brainstorming Partner', description: 'Creative ideas, pros/cons & trade-offs', prompt: 'Help brainstorm 5 creative, non-obvious ideas for this project with pros, cons, and trade-offs.' },
+  { id: 'explain-5', name: 'EL5 Explainer', description: 'Simple explanations using analogies', prompt: 'Explain this complex topic in simple terms with analogies suitable for a non-technical audience.' },
+]
+
+function parseThinkingAndContent(rawText: string) {
+  const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/i
+  const match = rawText.match(thinkRegex)
+  if (match) {
+    const thinking = match[1].trim()
+    const content = rawText.replace(thinkRegex, '').trim()
+    return { thinking, content }
+  }
+  return { thinking: null, content: rawText }
+}
+
+function CodeBlock({ inline, className, children, node, ...props }: any) {
+  const codeString = String(children).replace(/\n$/, '')
+  const isInline = inline || (!className && !codeString.includes('\n'))
+
+  if (isInline) {
+    return <code className="inline-code" {...props}>{children}</code>
+  }
+
+  const match = /language-(\w+)/.exec(className || '')
+  const lang = match ? match[1] : 'code'
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(codeString)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <div className="code-block-wrapper">
+      <div className="code-block-header">
+        <span>{lang}</span>
+        <button className="code-copy-btn" onClick={handleCopy} aria-label="Copy code">
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+          {copied ? 'Copied' : 'Copy code'}
+        </button>
+      </div>
+      <pre>
+        <code>{codeString}</code>
+      </pre>
+    </div>
+  )
+}
+
+
+export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   const [chats, setChats] = useState<Chat[]>([])
-  const [activeId, setActiveId] = useState('')
+  const [activeId, setActiveId] = useState(initialChatId || '')
   const [messages, setMessages] = useState<Message[]>([])
   const [models, setModels] = useState(fallbackModels)
+  const [selectedModel, setSelectedModel] = useState(fallbackModels[0].id)
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [presetOpen, setPresetOpen] = useState(false)
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [systemPromptDraft, setSystemPromptDraft] = useState('')
   const [temperature, setTemperature] = useState(0.7)
   const [topP, setTopP] = useState(1)
   const [maxTokens, setMaxTokens] = useState(4096)
   const [copied, setCopied] = useState<string | null>(null)
-  const [usage, setUsage] = useState<Usage>({ used: 0, dailyLimit: 2000000, plan: 'Free' })
+  const [usage, setUsage] = useState<Usage>({ used: 0, dailyLimit: null, plan: 'Standard Router' })
+
+  // Branching / Editing User Message State
+  const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [editingText, setEditingText] = useState('')
+
+  // File Attachment State
+  const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Voice Input (Speech-to-Text) State
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef<any>(null)
 
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeId), [chats, activeId])
 
   useEffect(() => {
-    fetch('/api/usage').then((r) => r.ok ? r.json() : null).then((data) => data && setUsage(data)).catch(() => {})
-    Promise.all([fetch('/api/chats').then((r) => r.json()), fetch('/api/models').then((r) => r.ok ? r.json() : fallbackModels)])
-      .then(([loadedChats, loadedModels]) => { setChats(loadedChats); setModels(loadedModels.length ? loadedModels : fallbackModels); if (loadedChats[0]) setActiveId(loadedChats[0].id) })
+    fetch('/api/usage').then((r) => (r.ok ? r.json() : null)).then((data) => data && setUsage(data)).catch(() => {})
+    Promise.all([
+      fetch('/api/chats').then((r) => r.json()),
+      fetch('/api/models').then((r) => (r.ok ? r.json() : fallbackModels)),
+    ])
+      .then(([loadedChats, loadedModels]) => {
+        setChats(loadedChats)
+        const modelsList = loadedModels.length ? loadedModels : fallbackModels
+        setModels(modelsList)
+        if (!selectedModel) setSelectedModel(modelsList[0]?.id || fallbackModels[0].id)
+      })
       .catch(() => {})
   }, [])
 
-  useEffect(() => { if (activeId) fetch(`/api/chats/${activeId}`).then((r) => r.json()).then(setMessages).catch(() => setMessages([])) }, [activeId])
-  useEffect(() => { setSystemPromptDraft(activeChat?.systemPrompt || '') }, [activeChat?.id, activeChat?.systemPrompt])
+  useEffect(() => {
+    if (initialChatId) setActiveId(initialChatId)
+  }, [initialChatId])
 
-  async function createChat() {
-    const model = models[0]?.id || fallbackModels[0].id
-    const response = await fetch('/api/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) })
-    const chat = await response.json()
-    setChats((current) => [chat, ...current]); setActiveId(chat.id); setMessages([]); setSidebarOpen(false)
+  useEffect(() => {
+    if (activeId) {
+      fetch(`/api/chats/${activeId}`)
+        .then((r) => r.json())
+        .then(setMessages)
+        .catch(() => setMessages([]))
+    } else {
+      setMessages([])
+    }
+  }, [activeId])
+
+  useEffect(() => {
+    setSystemPromptDraft(activeChat?.systemPrompt || '')
+  }, [activeChat?.id, activeChat?.systemPrompt])
+
+  // Voice Input SpeechRecognition Setup
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition()
+        recognition.continuous = true
+        recognition.interimResults = true
+        recognition.lang = 'en-US'
+
+        recognition.onresult = (event: any) => {
+          let transcript = ''
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript
+          }
+          if (transcript) {
+            setInput((prev) => (prev ? `${prev} ${transcript}` : transcript))
+          }
+        }
+
+        recognition.onerror = () => {
+          setIsListening(false)
+        }
+
+        recognition.onend = () => {
+          setIsListening(false)
+        }
+
+        recognitionRef.current = recognition
+      }
+    }
+  }, [])
+
+  function toggleVoiceInput() {
+    if (!recognitionRef.current) {
+      alert('Speech recognition is not supported in your browser.')
+      return
+    }
+    if (isListening) {
+      recognitionRef.current.stop()
+      setIsListening(false)
+    } else {
+      recognitionRef.current.start()
+      setIsListening(true)
+    }
   }
 
-  async function sendMessage(event?: React.FormEvent) {
+  function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const content = String(e.target?.result || '')
+      setAttachedFile({
+        name: file.name,
+        content,
+        size: file.size,
+      })
+    }
+    reader.readAsText(file)
+  }
+
+  function handleNewConversation() {
+    setActiveId('')
+    setMessages([])
+    setSidebarOpen(false)
+    setAttachedFile(null)
+    window.history.pushState(null, '', '/')
+  }
+
+  function selectChat(id: string) {
+    setActiveId(id)
+    setSidebarOpen(false)
+    setAttachedFile(null)
+    window.history.pushState(null, '', `/${id}`)
+  }
+
+  function applyPresetPrompt(presetPromptText: string) {
+    setSystemPromptDraft(presetPromptText)
+    updateChat({ systemPrompt: presetPromptText })
+    setPresetOpen(false)
+  }
+
+  async function sendMessage(event?: React.FormEvent, customUserText?: string, targetChatId?: string) {
     event?.preventDefault()
-    const text = input.trim()
+    let text = (customUserText || input).trim()
     if (!text || streaming) return
-    let chat = activeChat
-    if (!chat) { await createChat(); return }
-    setInput(''); setStreaming(true)
+
+    if (attachedFile) {
+      text = `[Attached File: ${attachedFile.name}]\n\`\`\`\n${attachedFile.content}\n\`\`\`\n\n${text}`
+      setAttachedFile(null)
+    }
+
+    let currentChatId = targetChatId || activeId
+    const isNew = !currentChatId
+    if (isNew) {
+      currentChatId = crypto.randomUUID()
+      setActiveId(currentChatId)
+      window.history.pushState(null, '', `/${currentChatId}`)
+    }
+
+    const currentModel = activeChat?.model || selectedModel || models[0]?.id || fallbackModels[0].id
+
+    if (isNew) {
+      const titleText = text.length > 42 ? `${text.slice(0, 42)}…` : text
+      const newChatObj: Chat = {
+        id: currentChatId,
+        title: titleText,
+        model: currentModel,
+        systemPrompt: systemPromptDraft,
+        updatedAt: new Date().toISOString(),
+      }
+      setChats((prev) => [newChatObj, ...prev.filter((c) => c.id !== currentChatId)])
+    }
+
+    setInput('')
+    setStreaming(true)
+
+
     const userMessage = { role: 'user' as const, content: text }
     const assistantMessage = { role: 'assistant' as const, content: '' }
     setMessages((current) => [...current, userMessage, assistantMessage])
-    if (messages.length === 0) {
-      const title = text.length > 42 ? `${text.slice(0, 42)}…` : text
-      setChats((current) => current.map((item) => item.id === chat!.id ? { ...item, title } : item))
-      fetch('/api/chats', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: chat.id, title }) })
-    }
+
     try {
-      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatId: chat.id, content: text, model: chat.model, temperature, topP, maxTokens }) })
-      if (!response.ok || !response.body) throw new Error('Request failed')
-      const reader = response.body.getReader(); const decoder = new TextDecoder(); let answer = ''
-      while (true) { const { done, value } = await reader.read(); if (done) break; answer += decoder.decode(value, { stream: true }); setMessages((current) => current.map((item, index) => index === current.length - 1 ? { ...item, content: answer } : item)) }
-    } catch { setMessages((current) => current.map((item, index) => index === current.length - 1 ? { ...item, content: 'I could not reach the model router. Please check the server configuration and try again.' } : item)) }
-    finally { setStreaming(false) }
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatId: currentChatId,
+          content: text,
+          model: currentModel,
+          systemPrompt: systemPromptDraft,
+          temperature,
+          topP,
+          maxTokens,
+          webSearch: webSearchEnabled,
+        }),
+      })
+
+      if (!response.ok || !response.body) {
+        let errorMsg = `Router error (${response.status})`
+        try {
+          const errData = await response.json()
+          if (errData?.error) errorMsg = errData.error
+        } catch {
+          /* fallback */
+        }
+        throw new Error(errorMsg)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let answer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        answer += decoder.decode(value, { stream: true })
+        setMessages((current) =>
+          current.map((item, index) => (index === current.length - 1 ? { ...item, content: answer } : item))
+        )
+      }
+
+      fetch('/api/chats')
+        .then((r) => r.json())
+        .then(setChats)
+        .catch(() => {})
+
+      fetch('/api/usage')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => data && setUsage(data))
+        .catch(() => {})
+    } catch (error: any) {
+      const displayErr = error?.message || 'An error occurred while communicating with the router.'
+      setMessages((current) =>
+        current.map((item, index) =>
+          index === current.length - 1
+            ? { ...item, content: displayErr.startsWith('⚠️') ? displayErr : `⚠️ ${displayErr}` }
+            : item
+        )
+      )
+    } finally {
+      setStreaming(false)
+    }
+
   }
 
-  async function deleteChat(id: string) { if (!window.confirm('Delete this conversation permanently?')) return; await fetch(`/api/chats?id=${id}`, { method: 'DELETE' }); const remaining = chats.filter((chat) => chat.id !== id); setChats(remaining); setActiveId(remaining[0]?.id || ''); setMessages([]) }
-  async function renameChat(chat: Chat) { const title = window.prompt('Rename conversation', chat.title); if (!title?.trim()) return; await fetch('/api/chats', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: chat.id, title }) }); setChats((current) => current.map((item) => item.id === chat.id ? { ...item, title: title.trim() } : item)) }
-  async function updateChat(patch: Partial<Chat>) { if (!activeChat) return; await fetch('/api/chats', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: activeChat.id, ...patch }) }); setChats((current) => current.map((item) => item.id === activeChat.id ? { ...item, ...patch } : item)) }
-  async function copyMessage(id: string, content: string) { await navigator.clipboard.writeText(content); setCopied(id); setTimeout(() => setCopied(null), 1400) }
+  // Branching: Drop all messages after edited user message & resubmit from that point
+  async function saveEditedMessage(index: number) {
+    const textToResend = editingText.trim()
+    if (!textToResend || streaming) return
 
-  return <main className="superchat-shell">
-    <aside className={`chat-sidebar ${sidebarOpen ? 'is-open' : ''}`}>
-      <div className="sidebar-brand"><div className="brand-mark"><Sparkles size={17} /></div><span>SuperChat</span><button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar"><X size={18} /></button></div>
-      <button className="new-chat-button" onClick={createChat}><MessageSquarePlus size={18} /> New conversation <span>⌘ K</span></button>
-      <div className="history-label">Your conversations <span>{chats.length}</span></div>
-      <nav className="chat-history" aria-label="Chat history">{chats.map((chat) => <div key={chat.id} className={`history-item ${chat.id === activeId ? 'active' : ''}`}><button onClick={() => { setActiveId(chat.id); setSidebarOpen(false) }}><MessageSquarePlus size={15} /><span>{chat.title}</span></button><div className="history-actions"><button onClick={() => renameChat(chat)} aria-label="Rename chat"><Pencil size={14} /></button><button onClick={() => deleteChat(chat.id)} aria-label="Delete chat"><Trash2 size={14} /></button></div></div>)}</nav>
-      <div className="sidebar-footer"><div className="profile-dot">S</div><div className="sidebar-account"><strong>SuperChat · {usage.plan}</strong><small>{Number(usage.used).toLocaleString()} / {Number(usage.dailyLimit).toLocaleString()} tokens today</small><div className="usage-track"><span style={{ width: `${Math.min(100, (Number(usage.used) / Math.max(1, Number(usage.dailyLimit))) * 100)}%` }} /></div></div><a href="/settings" className="footer-more" aria-label="Account settings"><Settings2 size={17} /></a></div>
-    </aside>
-    {sidebarOpen && <button className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-label="Close menu" />}
-    <section className="chat-main">
-      <header className="topbar"><button className="icon-button menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar"><PanelLeft size={19} /></button><div className="mobile-title"><div className="brand-mark"><Sparkles size={15} /></div><strong>SuperChat</strong></div><div className="topbar-spacer" /><div className="model-control"><span className="status-dot" /><select aria-label="Select model" value={activeChat?.model || models[0]?.id} onChange={(event) => updateChat({ model: event.target.value })}>{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select><ChevronDown size={15} /></div><button className={`icon-button ${settingsOpen ? 'selected' : ''}`} onClick={() => setSettingsOpen(!settingsOpen)} aria-label="Chat settings"><Settings2 size={18} /></button></header>
-      {settingsOpen && activeChat && <div className="settings-popover"><div className="settings-heading"><div><strong>Chat settings</strong><small>Applied to this conversation</small></div><button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close chat settings"><X size={16} /></button></div><label>System prompt <textarea value={systemPromptDraft} onChange={(event) => setSystemPromptDraft(event.target.value)} onBlur={() => updateChat({ systemPrompt: systemPromptDraft })} placeholder="How should SuperChat respond in this conversation?" /></label><small>Sent as the first <strong>system</strong> message on every request.</small><div className="generation-grid"><label>Temperature <output>{temperature.toFixed(1)}</output><input type="range" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} /></label><label>Top P <output>{topP.toFixed(1)}</output><input type="range" min="0" max="1" step="0.05" value={topP} onChange={(event) => setTopP(Number(event.target.value))} /></label><label>Max tokens <output>{maxTokens}</output><input type="number" min="256" max="32768" step="256" value={maxTokens} onChange={(event) => setMaxTokens(Number(event.target.value) || 256)} /></label></div></div>}
-      <div className="conversation"><div className="conversation-inner">{!activeChat || messages.length === 0 ? <div className="empty-state"><div className="empty-icon"><Bot size={25} /></div><p className="eyebrow">Your thinking partner</p><h1>What will we explore<br /><em>today?</em></h1><p className="empty-copy">Ask anything, sketch an idea, or bring a tricky problem. SuperChat is ready when you are.</p><div className="suggestions"><button onClick={() => setInput('Help me think through a new project idea')}><span>01</span>Help me think through a new project idea</button><button onClick={() => setInput('Explain a complex topic simply')}><span>02</span>Explain a complex topic simply</button><button onClick={() => setInput('Review and improve my writing')}><span>03</span>Review and improve my writing</button></div></div> : messages.map((message, index) => <article className={`message-row ${message.role}`} key={message.id || `${message.role}-${index}`}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={14} /> : 'S'}</div><div className="message-body"><div className="message-meta">{message.role === 'assistant' ? 'SuperChat' : 'You'} {message.role === 'assistant' && <span>· just now</span>}</div><div className="message-content">{message.role === 'assistant' ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || 'Thinking…'}</ReactMarkdown> : message.content}</div>{message.role === 'assistant' && message.content && <button className="copy-button" onClick={() => copyMessage(message.id || String(index), message.content)}>{copied === (message.id || String(index)) ? <Check size={14} /> : <Copy size={14} />} {copied === (message.id || String(index)) ? 'Copied' : 'Copy'}</button>}</div></article>)}</div></div>
-      <div className="composer-wrap"><form className="composer" onSubmit={sendMessage}><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); sendMessage() } }} placeholder="Message SuperChat…" rows={1} disabled={streaming} /><div className="composer-footer"><span>Shift + Enter for new line</span><button className="send-button" type="submit" disabled={!input.trim() || streaming} aria-label="Send message">{streaming ? <span className="loading-dots">•••</span> : <Send size={17} />}</button></div></form><p className="disclaimer">SuperChat can make mistakes. Check important information.</p></div>
-    </section>
-  </main>
+    setEditingIndex(null)
+    setEditingText('')
+
+    // Truncate messages list up to the edited user message
+    const truncatedMessages = messages.slice(0, index)
+    setMessages(truncatedMessages)
+
+    // Persist truncated chat history to backend so all subsequent messages are dropped
+    if (activeId) {
+      await fetch('/api/chats', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: activeId, messages: truncatedMessages }),
+      }).catch(() => {})
+    }
+
+    // Resubmit edited message to generate a fresh response from that point
+    await sendMessage(undefined, textToResend, activeId)
+  }
+
+  function exportChat(format: 'md' | 'json' | 'html') {
+    if (messages.length === 0) return
+    const title = activeChat?.title || 'SuperChat-Conversation'
+    let fileContent = ''
+    let mimeType = 'text/plain'
+    let extension = 'txt'
+
+    if (format === 'md') {
+      mimeType = 'text/markdown'
+      extension = 'md'
+      fileContent = `# ${title}\n\n` + messages.map((m) => `### **${m.role === 'user' ? 'User' : 'SuperChat'}**\n\n${m.content}\n`).join('\n---\n\n')
+    } else if (format === 'json') {
+      mimeType = 'application/json'
+      extension = 'json'
+      fileContent = JSON.stringify({ title, messages }, null, 2)
+    } else if (format === 'html') {
+      mimeType = 'text/html'
+      extension = 'html'
+      fileContent = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>body{font-family:sans-serif;max-width:800px;margin:30px auto;padding:0 20px;background:#f8f8fa;color:#27252f}.msg{margin-bottom:20px;padding:15px;border-radius:10px;background:#fff;border:1px solid #e3e3e9}.user{background:#eeebff}</style></head><body><h1>${title}</h1>` +
+        messages.map((m) => `<div class="msg ${m.role}"><strong>${m.role === 'user' ? 'User' : 'SuperChat'}:</strong><p>${m.content.replace(/\n/g, '<br>')}</p></div>`).join('') + `</body></html>`
+    }
+
+    const blob = new Blob([fileContent], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.${extension}`
+    a.click()
+    URL.revokeObjectURL(url)
+    setExportOpen(false)
+  }
+
+  async function deleteChat(id: string) {
+    if (!window.confirm('Delete this conversation permanently?')) return
+    await fetch(`/api/chats?id=${id}`, { method: 'DELETE' })
+    const remaining = chats.filter((chat) => chat.id !== id)
+    setChats(remaining)
+    if (activeId === id) handleNewConversation()
+  }
+
+  async function renameChat(chat: Chat) {
+    const title = window.prompt('Rename conversation', chat.title)
+    if (!title?.trim()) return
+    await fetch('/api/chats', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: chat.id, title }),
+    })
+    setChats((current) => current.map((item) => (item.id === chat.id ? { ...item, title: title.trim() } : item)))
+  }
+
+  async function updateChat(patch: Partial<Chat>) {
+    if (patch.model) setSelectedModel(patch.model)
+    if (!activeChat) return
+    await fetch('/api/chats', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: activeChat.id, ...patch }),
+    })
+    setChats((current) => current.map((item) => (item.id === activeChat.id ? { ...item, ...patch } : item)))
+  }
+
+  async function copyMessage(id: string, content: string) {
+    await navigator.clipboard.writeText(content)
+    setCopied(id)
+    setTimeout(() => setCopied(null), 1400)
+  }
+
+  const userDisplayName = usage.userName || (usage.userEmail ? usage.userEmail.split('@')[0] : 'Account')
+  const initials = getUserInitials(usage.userName, usage.userEmail)
+
+
+  return (
+    <main className="superchat-shell">
+      <aside className={`chat-sidebar ${sidebarOpen ? 'is-open' : ''}`}>
+        <div className="sidebar-brand">
+          <div className="brand-mark">
+            <SuperChatLogo size={18} />
+          </div>
+          <strong style={{ fontWeight: 700, fontSize: '17px', letterSpacing: '-0.03em' }}>SuperChat</strong>
+          <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar">
+            <X size={18} />
+          </button>
+        </div>
+        <button className="new-chat-button" onClick={handleNewConversation}>
+          <MessageSquarePlus size={18} /> New conversation <span>⌘ K</span>
+        </button>
+        <div className="history-label">Your conversations <span>{chats.length}</span></div>
+        <nav className="chat-history" aria-label="Chat history">
+          {chats.map((chat) => (
+            <div key={chat.id} className={`history-item ${chat.id === activeId ? 'active' : ''}`}>
+              <button onClick={() => selectChat(chat.id)}>
+                <MessageSquarePlus size={15} />
+                <span>{chat.title}</span>
+              </button>
+              <div className="history-actions">
+                <button onClick={() => renameChat(chat)} aria-label="Rename chat"><Pencil size={14} /></button>
+                <button onClick={() => deleteChat(chat.id)} aria-label="Delete chat"><Trash2 size={14} /></button>
+              </div>
+            </div>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <div className="profile-dot" title={usage.userEmail || userDisplayName}>
+            {initials}
+          </div>
+          <div className="sidebar-account">
+            <strong>{userDisplayName}</strong>
+            <small title={`Active Router: ${usage.routerUrl || 'https://router.bynara.id/v1'}`}>
+              {Number(usage.used).toLocaleString()} tokens used today
+            </small>
+            <div className="usage-track" title={`Active Router: ${usage.routerUrl || 'https://router.bynara.id/v1'}`}>
+              <span style={{ width: `${Math.min(100, (Number(usage.used) / 100000) * 100)}%` }} />
+            </div>
+          </div>
+
+          <a href="/settings" className="footer-more" aria-label="Account settings"><Settings2 size={17} /></a>
+        </div>
+      </aside>
+
+      {sidebarOpen && <button className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-label="Close menu" />}
+
+      <section className="chat-main">
+        <header className="topbar">
+          <button className="icon-button menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar">
+            <PanelLeft size={19} />
+          </button>
+          <div className="mobile-title">
+            <div className="brand-mark" style={{ width: 25, height: 25 }}>
+              <SuperChatLogo size={14} />
+            </div>
+            <strong style={{ fontWeight: 700, fontSize: '15px' }}>SuperChat</strong>
+          </div>
+          <div className="topbar-spacer" />
+          <div className="model-control">
+            <span className="status-dot" />
+            <select
+              aria-label="Select model"
+              value={activeChat?.model || selectedModel}
+              onChange={(event) => updateChat({ model: event.target.value })}
+            >
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>{model.name}</option>
+              ))}
+            </select>
+            <ChevronDown size={15} />
+          </div>
+
+          {messages.length > 0 && (
+            <button className="icon-button" onClick={() => setExportOpen(!exportOpen)} title="Export conversation">
+              <Download size={18} />
+            </button>
+          )}
+
+          {exportOpen && (
+            <div className="export-dropdown">
+              <button onClick={() => exportChat('md')}><FileText size={14} /> Export Markdown (.md)</button>
+              <button onClick={() => exportChat('json')}><FileText size={14} /> Export JSON (.json)</button>
+              <button onClick={() => exportChat('html')}><FileText size={14} /> Export HTML (.html)</button>
+            </div>
+          )}
+
+          <button
+            className={`icon-button ${settingsOpen ? 'selected' : ''}`}
+            onClick={() => setSettingsOpen(!settingsOpen)}
+            aria-label="Chat settings"
+          >
+            <Settings2 size={18} />
+          </button>
+        </header>
+
+        {settingsOpen && (
+          <div className="settings-popover">
+            <div className="settings-heading">
+              <div>
+                <strong>Chat settings</strong>
+                <small>Applied to this conversation</small>
+              </div>
+              <button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close chat settings">
+                <X size={16} />
+              </button>
+            </div>
+            <label>
+              System prompt
+              <textarea
+                value={systemPromptDraft}
+                onChange={(event) => setSystemPromptDraft(event.target.value)}
+                onBlur={() => updateChat({ systemPrompt: systemPromptDraft })}
+                placeholder="How should SuperChat respond in this conversation?"
+              />
+            </label>
+            <div style={{ marginTop: 8, marginBottom: 10 }}>
+              <small style={{ fontWeight: 600, color: 'var(--muted-foreground)', display: 'block', marginBottom: 6 }}>
+                Quick Presets:
+              </small>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {POPULAR_PROMPT_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      setSystemPromptDraft(p.prompt)
+                      updateChat({ systemPrompt: p.prompt })
+                    }}
+                    style={{
+                      fontSize: 11,
+                      padding: '3px 8px',
+                      borderRadius: 6,
+                      border: systemPromptDraft === p.prompt ? '1px solid var(--primary)' : '1px solid var(--border)',
+                      background: systemPromptDraft === p.prompt ? 'var(--primary-soft)' : 'var(--background)',
+                      color: systemPromptDraft === p.prompt ? 'var(--primary)' : 'var(--foreground)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {p.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <small>Sent as the first <strong>system</strong> message on every request.</small>
+            <div className="generation-grid">
+              <label>
+                Temperature <output>{temperature.toFixed(1)}</output>
+                <input type="range" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} />
+              </label>
+              <label>
+                Top P <output>{topP.toFixed(1)}</output>
+                <input type="range" min="0" max="1" step="0.05" value={topP} onChange={(event) => setTopP(Number(event.target.value))} />
+              </label>
+              <label>
+                Max tokens <output>{maxTokens}</output>
+                <input type="number" min="256" max="32768" step="256" value={maxTokens} onChange={(event) => setMaxTokens(Number(event.target.value) || 256)} />
+              </label>
+            </div>
+          </div>
+        )}
+
+        <div className="conversation">
+          <div className="conversation-inner">
+            {!activeId || messages.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon"><Bot size={25} /></div>
+                <p className="eyebrow">Your thinking partner</p>
+                <h1>What will we explore<br /><em>today?</em></h1>
+                <p className="empty-copy">Ask anything, sketch an idea, or bring a tricky problem. SuperChat is ready when you are.</p>
+                <div className="suggestions">
+                  <button onClick={() => setInput('Help me think through a new project idea')}>
+                    <span>01</span>Help me think through a new project idea
+                  </button>
+                  <button onClick={() => setInput('Explain a complex topic simply')}>
+                    <span>02</span>Explain a complex topic simply
+                  </button>
+                  <button onClick={() => setInput('Review and improve my writing')}>
+                    <span>03</span>Review and improve my writing
+                  </button>
+                </div>
+              </div>
+            ) : (
+              messages.map((message, index) => {
+                const { thinking, content: parsedContent } = message.role === 'assistant'
+                  ? parseThinkingAndContent(message.content)
+                  : { thinking: null, content: message.content }
+
+                return (
+                  <article className={`message-row ${message.role}`} key={message.id || `${message.role}-${index}`}>
+                    <div className="message-avatar" title={message.role === 'assistant' ? 'SuperChat AI' : userDisplayName}>
+                      {message.role === 'assistant' ? <Sparkles size={16} /> : initials}
+                    </div>
+                    <div className="message-body">
+                      <div className="message-meta">
+                        <strong>{message.role === 'assistant' ? 'SuperChat AI' : userDisplayName}</strong>
+                        {message.role === 'user' && (
+                          <button
+                            className="icon-button"
+                            style={{ width: 22, height: 22 }}
+                            onClick={() => { setEditingIndex(index); setEditingText(message.content) }}
+                            title="Edit message & branch"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        )}
+                      </div>
+
+
+                      {editingIndex === index ? (
+                        <div className="edit-message-box">
+                          <textarea
+                            value={editingText}
+                            onChange={(e) => setEditingText(e.target.value)}
+                          />
+                          <div className="edit-actions">
+                            <button className="edit-btn-cancel" onClick={() => setEditingIndex(null)}>Cancel</button>
+                            <button className="edit-btn-save" onClick={() => saveEditedMessage(index)}>Save & Resend</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="message-content">
+                          {thinking && (
+                            <details className="thinking-block" open>
+                              <summary className="thinking-summary">
+                                <Sparkles size={13} /> Thinking Process
+                              </summary>
+                              <div className="thinking-body">{thinking}</div>
+                            </details>
+                          )}
+                          {message.role === 'assistant' ? (
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{ code: CodeBlock }}
+                            >
+                              {parsedContent || (thinking ? '' : 'Thinking…')}
+                            </ReactMarkdown>
+                          ) : (
+                            message.content
+                          )}
+                        </div>
+                      )}
+
+                      {message.role === 'assistant' && message.content && (
+                        <button className="copy-button" onClick={() => copyMessage(message.id || String(index), message.content)}>
+                          {copied === (message.id || String(index)) ? <Check size={14} /> : <Copy size={14} />} {copied === (message.id || String(index)) ? 'Copied' : 'Copy'}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                )
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="composer-wrap">
+          {presetOpen && (
+            <div className="preset-popover">
+              {PRESET_PROMPTS.map((item) => (
+                <button key={item.id} className="preset-item" onClick={() => applyPresetPrompt(item.prompt)}>
+                  <strong>{item.name}</strong>
+                  <small>{item.description}</small>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {attachedFile && (
+            <div className="attached-file-chip">
+              <FileText size={14} />
+              <span>{attachedFile.name} ({(attachedFile.size / 1024).toFixed(1)} KB)</span>
+              <button onClick={() => setAttachedFile(null)} aria-label="Remove attachment"><X size={14} /></button>
+            </div>
+          )}
+
+          <form className="composer" onSubmit={sendMessage}>
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                  event.preventDefault()
+                  sendMessage()
+                }
+              }}
+              placeholder="Message SuperChat…"
+              rows={1}
+              disabled={streaming}
+            />
+            <input
+              type="file"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              onChange={handleFileUpload}
+              accept=".txt,.md,.json,.js,.ts,.jsx,.tsx,.py,.css,.html,.csv,.sql"
+            />
+            <div className="composer-footer">
+              <div className="composer-toolbar">
+                <button
+                  type="button"
+                  className={`preset-badge-btn ${webSearchEnabled ? 'active-search' : ''}`}
+                  onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                  title="Toggle real-time Web Search grounding"
+                >
+                  <Globe size={13} /> Web Search
+                </button>
+                <button
+                  type="button"
+                  className="preset-badge-btn"
+                  onClick={() => setPresetOpen(!presetOpen)}
+                  title="Preset prompt library"
+                >
+                  <BookOpen size={13} /> Presets
+                </button>
+                <button
+                  type="button"
+                  className="tool-icon-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach file"
+                >
+                  <Paperclip size={15} />
+                </button>
+                <button
+                  type="button"
+                  className={`tool-icon-btn ${isListening ? 'recording' : ''}`}
+                  onClick={toggleVoiceInput}
+                  title={isListening ? 'Stop recording' : 'Voice dictation'}
+                >
+                  <Mic size={15} />
+                </button>
+              </div>
+              <button className="send-button" type="submit" disabled={(!input.trim() && !attachedFile) || streaming} aria-label="Send message">
+                {streaming ? <span className="loading-dots">•••</span> : <Send size={17} />}
+              </button>
+            </div>
+          </form>
+          <p className="disclaimer">SuperChat can make mistakes. Check important information.</p>
+        </div>
+      </section>
+    </main>
+  )
 }

@@ -1,8 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { sql } from 'drizzle-orm'
 import { requireUser } from '@/lib/session'
 
-async function admin() { const user = await requireUser(); if ((user as { role?: string }).role !== 'admin') throw new Error('FORBIDDEN'); return user }
-export async function GET() { await admin(); const [packages, users, usage] = await Promise.all([db.execute(sql`SELECT * FROM packages ORDER BY daily_token_limit ASC`), db.execute(sql`SELECT id, name, email, role, package_id as "packageId", banned, "createdAt" FROM "user" ORDER BY "createdAt" DESC LIMIT 200`), db.execute(sql`SELECT usage_date as date, SUM(tokens_used)::bigint as tokens, COUNT(DISTINCT user_id)::int as users FROM usage_logs GROUP BY usage_date ORDER BY usage_date DESC LIMIT 30`)]); return NextResponse.json({ packages: packages.rows, users: users.rows, usage: usage.rows }) }
-export async function POST(request: NextRequest) { await admin(); const body = await request.json(); if (body.action === 'package') { const id = String(body.id || crypto.randomUUID()); await db.execute(sql`INSERT INTO packages (id, name, daily_token_limit, allowed_models, rate_limit_per_minute, max_chats) VALUES (${id}, ${String(body.name)}, ${Number(body.dailyTokenLimit) || 0}, ${JSON.stringify(Array.isArray(body.allowedModels) ? body.allowedModels : [])}::jsonb, ${Number(body.rateLimitPerMinute) || 30}, ${Number(body.maxChats) || 100}) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, daily_token_limit = EXCLUDED.daily_token_limit, allowed_models = EXCLUDED.allowed_models, rate_limit_per_minute = EXCLUDED.rate_limit_per_minute, max_chats = EXCLUDED.max_chats, updated_at = NOW()`); return NextResponse.json({ ok: true, id }) } if (body.action === 'user') { await db.execute(sql`UPDATE "user" SET package_id = ${String(body.packageId || '')}, banned = ${Boolean(body.banned)}, role = ${body.role === 'admin' ? 'admin' : 'user'}, "updatedAt" = NOW() WHERE id = ${String(body.userId)}`); return NextResponse.json({ ok: true }) } return NextResponse.json({ error: 'Unknown action' }, { status: 400 }) }
+async function admin() {
+  const user = await requireUser()
+  if ((user as { role?: string }).role !== 'admin') throw new Error('FORBIDDEN')
+  return user
+}
+
+export async function GET() {
+  await admin()
+  const users = db.prepare('SELECT id, name, email, role, banned, createdAt FROM "user" ORDER BY createdAt DESC LIMIT 200').all()
+  const usage = db.prepare('SELECT usage_date as date, SUM(tokens_used) as tokens, COUNT(DISTINCT user_id) as users FROM usage_logs GROUP BY usage_date ORDER BY usage_date DESC LIMIT 30').all()
+
+  return NextResponse.json({ users, usage })
+}
+
+export async function POST(request: NextRequest) {
+  await admin()
+  const body = await request.json().catch(() => ({}))
+
+  if (body.action === 'user') {
+    db.prepare(`
+      UPDATE "user"
+      SET banned = ?, role = ?, updatedAt = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(body.banned ? 1 : 0, body.role === 'admin' ? 'admin' : 'user', String(body.userId))
+
+    return NextResponse.json({ ok: true })
+  }
+
+  return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
+}

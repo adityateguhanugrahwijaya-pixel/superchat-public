@@ -1,22 +1,124 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomUUID } from 'node:crypto'
 import { db } from '@/lib/db'
-import { sql } from 'drizzle-orm'
 import { requireUser } from '@/lib/session'
-import { encryptSecret } from '@/lib/crypto'
+import { encryptSecret, decryptSecret } from '@/lib/crypto'
 
 export async function GET() {
   const user = await requireUser()
-  const result = await db.execute(sql`SELECT api_mode as "apiMode", custom_router_url as "customRouterUrl", timezone FROM user_settings WHERE user_id = ${user.id}`)
-  return NextResponse.json(result.rows[0] ?? { apiMode: 'superchat', customRouterUrl: null, timezone: 'UTC' })
+  const row = db
+    .prepare(
+      'SELECT api_mode as apiMode, custom_router_url as customRouterUrl, custom_api_key_encrypted as customApiKeyEncrypted, global_system_prompt as globalSystemPrompt, default_model as defaultModel, timezone FROM user_settings WHERE user_id = ?'
+    )
+    .get(user.id) as
+    | {
+        apiMode?: string
+        customRouterUrl?: string
+        customApiKeyEncrypted?: string
+        globalSystemPrompt?: string
+        defaultModel?: string
+        timezone?: string
+      }
+    | undefined
+
+  return NextResponse.json({
+    apiMode: row?.apiMode || 'superchat',
+    customRouterUrl: row?.customRouterUrl || '',
+    hasCustomApiKey: Boolean(row?.customApiKeyEncrypted),
+    globalSystemPrompt: row?.globalSystemPrompt || '',
+    defaultModel: row?.defaultModel || '',
+    timezone: row?.timezone || 'UTC',
+    userEmail: user.email,
+    userName: user.name,
+    userId: user.id,
+    createdAt: (user as any).createdAt || (user as any).created_at || null,
+  })
 }
 
 export async function PUT(request: NextRequest) {
   const user = await requireUser()
-  const body = await request.json()
+  const body = await request.json().catch(() => ({}))
   const mode = body.apiMode === 'byo' ? 'byo' : 'superchat'
   const key = typeof body.customApiKey === 'string' && body.customApiKey.trim() ? encryptSecret(body.customApiKey.trim()) : null
   const url = typeof body.customRouterUrl === 'string' ? body.customRouterUrl.trim().slice(0, 500) : null
-  await db.execute(sql`INSERT INTO user_settings (user_id, api_mode, custom_api_key_encrypted, custom_router_url) VALUES (${user.id}, ${mode}, ${key}, ${url}) ON CONFLICT (user_id) DO UPDATE SET api_mode = ${mode}, custom_api_key_encrypted = COALESCE(${key}, user_settings.custom_api_key_encrypted), custom_router_url = ${url}, updated_at = NOW()`)
-  return NextResponse.json({ ok: true, apiMode: mode, customRouterUrl: url })
+  const globalSystemPrompt = typeof body.globalSystemPrompt === 'string' ? body.globalSystemPrompt.slice(0, 3000) : null
+  const defaultModel = typeof body.defaultModel === 'string' ? body.defaultModel.trim() : null
+  const timezone = typeof body.timezone === 'string' ? body.timezone.trim() : 'UTC'
+
+  db.prepare(`
+    INSERT INTO user_settings (user_id, api_mode, custom_api_key_encrypted, custom_router_url, global_system_prompt, default_model, timezone)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      api_mode = excluded.api_mode,
+      custom_api_key_encrypted = COALESCE(excluded.custom_api_key_encrypted, user_settings.custom_api_key_encrypted),
+      custom_router_url = excluded.custom_router_url,
+      global_system_prompt = excluded.global_system_prompt,
+      default_model = excluded.default_model,
+      timezone = excluded.timezone,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(user.id, mode, key, url, globalSystemPrompt, defaultModel, timezone)
+
+  return NextResponse.json({
+    ok: true,
+    apiMode: mode,
+    customRouterUrl: url,
+    globalSystemPrompt,
+    defaultModel,
+    timezone,
+  })
 }
+
+export async function POST(request: NextRequest) {
+  const user = await requireUser()
+  const body = await request.json().catch(() => ({}))
+
+  if (body.action === 'test_connection') {
+    let testUrl = String(body.customRouterUrl || '').trim() || 'https://router.bynara.id/v1'
+    if (testUrl.endsWith('/chat/completions')) {
+      testUrl = testUrl.replace(/\/chat\/completions$/, '/models')
+    } else if (testUrl.endsWith('/')) {
+      testUrl = `${testUrl}models`
+    } else {
+      testUrl = `${testUrl}/models`
+    }
+
+    let apiKey = String(body.customApiKey || '').trim()
+    if (!apiKey) {
+      const row = db
+        .prepare('SELECT custom_api_key_encrypted FROM user_settings WHERE user_id = ?')
+        .get(user.id) as { custom_api_key_encrypted?: string } | undefined
+      if (row?.custom_api_key_encrypted) {
+        try {
+          apiKey = decryptSecret(row.custom_api_key_encrypted)
+        } catch {}
+      }
+    }
+    if (!apiKey) apiKey = process.env.BYNARA_API_KEY || ''
+
+    try {
+      const res = await fetch(testUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      })
+      if (res.ok) {
+        return NextResponse.json({
+          ok: true,
+          status: res.status,
+          message: 'Router connection successful! Endpoint and API key are valid.',
+        })
+      }
+      return NextResponse.json({
+        ok: false,
+        status: res.status,
+        message: `Router connection returned status ${res.status}. Please check URL and API Key permissions.`,
+      })
+    } catch (err: any) {
+      return NextResponse.json({
+        ok: false,
+        status: 500,
+        message: `Failed to connect to router endpoint: ${err?.message || 'Network error'}`,
+      })
+    }
+  }
+
+  return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
+}
+

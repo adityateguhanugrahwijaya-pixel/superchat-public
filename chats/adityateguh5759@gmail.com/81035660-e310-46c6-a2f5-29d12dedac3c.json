@@ -1,0 +1,17 @@
+{
+  "id": "81035660-e310-46c6-a2f5-29d12dedac3c",
+  "userEmail": "adityateguh5759@gmail.com",
+  "title": "test",
+  "systemPrompt": "",
+  "model": "deepseek/deepseek-chat",
+  "createdAt": "2026-09-08T03:13:53.271Z",
+  "updatedAt": "2026-09-08T03:13:53.272Z",
+  "messages": [
+    {
+      "id": "ee3dc856-c988-4293-80d9-948d51707949",
+      "role": "user",
+      "content": "test",
+      "createdAt": "2026-09-08T03:13:53.272Z"
+    }
+  ]
+}

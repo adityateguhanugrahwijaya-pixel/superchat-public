@@ -1,7 +1,10 @@
 import { betterAuth } from 'better-auth'
-import { Pool } from 'pg'
+import Database from 'better-sqlite3'
+import path from 'node:path'
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+const dbPath = process.env.SQLITE_PATH || path.join(process.cwd(), 'local.db')
+const sqlite = new Database(dbPath)
+sqlite.pragma('journal_mode = WAL')
 
 function nonEmpty(value: string | undefined) {
   const trimmed = value?.trim()
@@ -31,20 +34,22 @@ const origins = [
   originFromHost(process.env.VERCEL_PROJECT_PRODUCTION_URL),
 ].filter((origin): origin is string => Boolean(origin))
 
-
 export const auth = betterAuth({
-  database: pool,
+  database: sqlite,
   baseURL,
   trustedOrigins: origins,
   emailAndPassword: { enabled: true },
+  advanced: {
+    useSnakeCase: true,
+    ...(process.env.NODE_ENV === 'development'
+      ? { defaultCookieAttributes: { sameSite: 'none' as const, secure: true } }
+      : {}),
+  },
   user: {
     additionalFields: {
       role: { type: 'string', defaultValue: 'user', input: false },
-      packageId: { type: 'string', required: false, input: false },
+      packageId: { type: 'string', required: false, input: false, fieldName: 'package_id' },
       banned: { type: 'boolean', defaultValue: false, input: false },
     },
   },
-  ...(process.env.NODE_ENV === 'development'
-    ? { advanced: { defaultCookieAttributes: { sameSite: 'none' as const, secure: true } } }
-    : {}),
 })
