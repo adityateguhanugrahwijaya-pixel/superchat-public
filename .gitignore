@@ -16,6 +16,12 @@ __v0_jsx-dev-runtime.ts
 appconfig.json
 !appconfig.json.example
 
+# Data & local stores
+chats/
+local.db
+local.db-shm
+local.db-wal
+
 # Common ignores
 node_modules
 .next/
