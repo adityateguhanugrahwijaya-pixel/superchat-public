@@ -162,6 +162,15 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   // File Attachment State
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-scale textarea height based on content
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 220)}px`
+    }
+  }, [input])
 
   // Side Canvas & Sandbox State
   const [canvasOpen, setCanvasOpen] = useState(false)
@@ -861,6 +870,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
 
           <form className="composer" onSubmit={sendMessage}>
             <textarea
+              ref={textareaRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
