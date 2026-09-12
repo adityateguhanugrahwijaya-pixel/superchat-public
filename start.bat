@@ -59,13 +59,19 @@ if "%INPUT_KEY%"=="" (
 )
 set "BYNARA_KEY=%INPUT_KEY%"
 
+set "SANDBOX_ENABLED=true"
+set /p "INPUT_SANDBOX=Enable Isolated Sandbox Workspace (Python/Node code runner)? [Y/n, default: Y]: "
+if /i "%INPUT_SANDBOX%"=="n" set "SANDBOX_ENABLED=false"
+if /i "%INPUT_SANDBOX%"=="no" set "SANDBOX_ENABLED=false"
+
 (
     echo {
     echo   "admin": {
     echo     "email": "%ADMIN_EMAIL%",
     echo     "name": "%ADMIN_NAME%",
     echo     "password": "%ADMIN_PASSWORD%"
-    echo   }
+    echo   },
+    echo   "sandboxEnabled": %SANDBOX_ENABLED%
     echo }
 ) > appconfig.json
 echo [OK] Created appconfig.json (Admin account configuration).

@@ -37,3 +37,31 @@ export function getRelativeSandboxPath(userEmail: string, conversationId: string
   const sandboxDir = getSandboxDir(userEmail, conversationId)
   return path.relative(sandboxDir, fullPath)
 }
+
+/**
+ * Checks whether the Sandbox system is enabled in appconfig.json or environment variables.
+ * Defaults to true if unspecified.
+ */
+export function isSandboxEnabled(): boolean {
+  if (process.env.SANDBOX_ENABLED !== undefined) {
+    const val = process.env.SANDBOX_ENABLED.trim().toLowerCase()
+    return val === 'true' || val === '1'
+  }
+
+  const configPath = path.join(process.cwd(), 'appconfig.json')
+  if (fs.existsSync(configPath)) {
+    try {
+      const fileContent = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      if (typeof fileContent.sandboxEnabled === 'boolean') {
+        return fileContent.sandboxEnabled
+      }
+      if (typeof fileContent.sandbox?.enabled === 'boolean') {
+        return fileContent.sandbox.enabled
+      }
+    } catch {
+      // Ignore parse error
+    }
+  }
+
+  return true
+}

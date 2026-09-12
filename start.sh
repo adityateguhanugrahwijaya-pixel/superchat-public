@@ -63,6 +63,14 @@ if [ ! -f ".env.local" ] && [ ! -f "appconfig.json" ]; then
         fi
     done
 
+    read -p "Enable Isolated Sandbox Workspace (Python/Node code runner)? [Y/n, default: Y]: " INPUT_SANDBOX
+    INPUT_SANDBOX_LOWER=$(echo "${INPUT_SANDBOX:-Y}" | tr '[:upper:]' '[:lower:]')
+    if [ "$INPUT_SANDBOX_LOWER" = "n" ] || [ "$INPUT_SANDBOX_LOWER" = "no" ]; then
+        IS_SANDBOX=false
+    else
+        IS_SANDBOX=true
+    fi
+
     AUTH_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null || echo "superchat_secret_key_bynara_auth_32bytes_min")
 
     cat <<EOF > appconfig.json
@@ -71,7 +79,8 @@ if [ ! -f ".env.local" ] && [ ! -f "appconfig.json" ]; then
     "email": "${ADMIN_EMAIL}",
     "name": "${ADMIN_NAME}",
     "password": "${ADMIN_PASSWORD}"
-  }
+  },
+  "sandboxEnabled": ${IS_SANDBOX}
 }
 EOF
     echo "✓ Created appconfig.json (Admin account configuration)."

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/session'
-import { resolveSandboxPath } from '@/lib/sandbox'
+import { resolveSandboxPath, isSandboxEnabled } from '@/lib/sandbox'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -40,6 +40,13 @@ function getMimeType(filePath: string): string {
 
 export async function GET(request: NextRequest) {
   try {
+    if (!isSandboxEnabled()) {
+      return NextResponse.json(
+        { error: 'Sandbox file serving is disabled by server administrator.' },
+        { status: 403 }
+      )
+    }
+
     const user = await requireUser()
     const url = new URL(request.url)
     const chatId = url.searchParams.get('chatId')

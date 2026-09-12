@@ -3,6 +3,7 @@ import { requireUser } from '@/lib/session'
 import { db } from '@/lib/db'
 import { getChat, createChatFile, saveChat, MessageItem } from '@/lib/chats'
 import { performWebSearch } from '@/lib/websearch'
+import { isSandboxEnabled } from '@/lib/sandbox'
 
 export async function POST(request: NextRequest) {
   const user = await requireUser()
@@ -78,14 +79,16 @@ export async function POST(request: NextRequest) {
   // Build system message capabilities
   const capabilityPrompts: string[] = []
 
-  // Workspace & File Serving System Instruction
-  capabilityPrompts.push(
-    `[System Workspace & File Serving Capabilities]\n` +
-      `You are SuperChat AI, an intelligent coding and thinking partner. You have an active isolated workspace sandbox for this conversation.\n` +
-      `When you create or serve files (such as python/javascript code, documents, images, PDFs, or Excel spreadsheets), wrap the file reference using XML file tags:\n` +
-      `<file path="filename.ext">Display Title</file>\n` +
-      `This will automatically render an interactive File Card in the user's chat, allowing them to view and download the file in their Side Canvas.`
-  )
+  // Workspace & File Serving System Instruction (Only if Sandbox is enabled by server admin)
+  if (isSandboxEnabled()) {
+    capabilityPrompts.push(
+      `[System Workspace & File Serving Capabilities]\n` +
+        `You are SuperChat AI, an intelligent coding and thinking partner. You have an active isolated workspace sandbox for this conversation.\n` +
+        `When you create or serve files (such as python/javascript code, documents, images, PDFs, or Excel spreadsheets), wrap the file reference using XML file tags:\n` +
+        `<file path="filename.ext">Display Title</file>\n` +
+        `This will automatically render an interactive File Card in the user's chat, allowing them to view and download the file in their Side Canvas.`
+    )
+  }
 
   if (enableWebSearch) {
     capabilityPrompts.push(

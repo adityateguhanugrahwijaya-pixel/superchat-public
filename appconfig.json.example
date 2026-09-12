@@ -3,5 +3,6 @@
     "email": "admin@superchat.local",
     "name": "SuperChat Admin",
     "password": "AdminPassword123!"
-  }
+  },
+  "sandboxEnabled": true
 }

@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/session'
 import { assessToolSafety } from '@/lib/sandbox/safety'
 import { executeSandboxTool } from '@/lib/sandbox/executor'
+import { isSandboxEnabled } from '@/lib/sandbox'
 
 export async function POST(request: NextRequest) {
   try {
+    if (!isSandboxEnabled()) {
+      return NextResponse.json(
+        { error: 'Isolated Sandbox system is disabled by server administrator.' },
+        { status: 403 }
+      )
+    }
+
     const user = await requireUser()
     const body = await request.json().catch(() => ({}))
 
