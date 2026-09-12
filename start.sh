@@ -63,8 +63,13 @@ if [ ! -f ".env.local" ] && [ ! -f "appconfig.json" ]; then
     read -p "Enter Admin Password [default: AdminPassword123!]: " INPUT_PASS
     ADMIN_PASSWORD=${INPUT_PASS:-AdminPassword123!}
 
-    read -p "Enter Bynara API Key (Optional - press Enter to skip): " INPUT_KEY
-    BYNARA_KEY=${INPUT_KEY:-}
+    BYNARA_KEY=""
+    while [ -z "$BYNARA_KEY" ]; do
+        read -p "Enter Bynara API Key (Required): " BYNARA_KEY
+        if [ -z "$BYNARA_KEY" ]; then
+            echo "❌ Bynara API Key is required to connect to AI models! Get your key at https://router.bynara.id/"
+        fi
+    done
 
     if [ "$CONFIG_CHOICE" = "1" ] || [ "$CONFIG_CHOICE" = "3" ]; then
         cat <<EOF > .env.local

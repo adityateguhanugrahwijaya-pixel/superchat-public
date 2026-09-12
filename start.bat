@@ -58,8 +58,14 @@ if not "%INPUT_NAME%"=="" set "ADMIN_NAME=%INPUT_NAME%"
 set /p "INPUT_PASS=Enter Admin Password [default: AdminPassword123!]: "
 if not "%INPUT_PASS%"=="" set "ADMIN_PASSWORD=%INPUT_PASS%"
 
-set /p "INPUT_KEY=Enter Bynara API Key (Optional - press Enter to skip): "
-if not "%INPUT_KEY%"=="" set "BYNARA_KEY=%INPUT_KEY%"
+:PROMPT_KEY
+set "INPUT_KEY="
+set /p "INPUT_KEY=Enter Bynara API Key (Required): "
+if "%INPUT_KEY%"=="" (
+    echo [X] Bynara API Key is required to connect to AI models! Get key at: https://router.bynara.id/
+    goto PROMPT_KEY
+)
+set "BYNARA_KEY=%INPUT_KEY%"
 
 if "%CHOICE%"=="1" goto WRITE_ENV
 if "%CHOICE%"=="3" goto WRITE_BOTH
