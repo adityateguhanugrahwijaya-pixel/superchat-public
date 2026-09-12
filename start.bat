@@ -3,7 +3,7 @@ title SuperChat Launcher
 cls
 
 echo =================================================================
-echo    ⚡ SuperChat - Private AI Workspace & LLM Router Client
+echo    ⚡ SuperChat - Private AI Workspace and LLM Router Client
 echo =================================================================
 echo.
 
@@ -45,7 +45,7 @@ if not exist ".env.local" if not exist "appconfig.json" (
     echo Select Configuration Format:
     echo   1) .env.local (Environment Variables File - Recommended)
     echo   2) appconfig.json (JSON Configuration File)
-    echo   3) Both (.env.local + appconfig.json)
+    echo   3) Both (.env.local and appconfig.json)
     set /p "CHOICE=Select choice [1-3, default: 1]: "
 
     set /p "INPUT_EMAIL=Enter Admin Email [default: admin@superchat.local]: "
@@ -104,7 +104,7 @@ if not exist ".next\" (
     call npm run build
 )
 
-:: 5. Launch app & open browser
+:: 5. Launch app and open browser
 echo.
 echo =================================================================
 echo 🎉 Launching SuperChat server on http://localhost:3000

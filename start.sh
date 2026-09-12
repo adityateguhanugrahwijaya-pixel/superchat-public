@@ -8,7 +8,7 @@ set -e
 
 echo ""
 echo "================================================================="
-echo "   ⚡ SuperChat - Private AI Workspace & LLM Router Client"
+echo "   ⚡ SuperChat - Private AI Workspace and LLM Router Client"
 echo "================================================================="
 echo ""
 
@@ -49,7 +49,7 @@ if [ ! -f ".env.local" ] && [ ! -f "appconfig.json" ]; then
     echo "Select Configuration Format:"
     echo "  1) .env.local (Environment Variables File - Recommended)"
     echo "  2) appconfig.json (JSON Configuration File)"
-    echo "  3) Both (.env.local + appconfig.json)"
+    echo "  3) Both (.env.local and appconfig.json)"
     read -p "Select choice [1-3, default: 1]: " CONFIG_CHOICE
     CONFIG_CHOICE=${CONFIG_CHOICE:-1}
 
