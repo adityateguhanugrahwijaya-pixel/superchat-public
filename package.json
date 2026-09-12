@@ -6,7 +6,7 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "postinstall": "termux-fix-shebang node_modules/.bin/* 2>/dev/null || true"
+    "postinstall": "node -e \"if (process.platform === 'android' || process.env.TERMUX_VERSION) { try { require('child_process').execSync('termux-fix-shebang node_modules/.bin/*'); } catch(e){} }\""
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
