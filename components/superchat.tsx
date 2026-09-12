@@ -431,6 +431,10 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => data && setUsage(data))
         .catch(() => {})
+
+      if (isNew) {
+        window.location.href = `/${currentChatId}`
+      }
     } catch (error: any) {
       const displayErr = error?.message || 'An error occurred while communicating with the router.'
       setMessages((current) =>
