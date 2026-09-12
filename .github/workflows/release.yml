@@ -37,6 +37,7 @@ jobs:
           echo "📦 Packaging Full Release: ${FULL_ARCHIVE}"
           zip -r "${FULL_ARCHIVE}" . \
             -x "*.git*" \
+            -x "*.github*" \
             -x "node_modules/*" \
             -x ".next/*" \
             -x "local.db*" \
@@ -52,7 +53,7 @@ jobs:
           # Create delete.txt listing deleted files
           if [ -n "${PREV_TAG}" ]; then
             echo "# Files removed in ${TAG_NAME} since ${PREV_TAG}:" > delete.txt
-            git diff --name-only --diff-filter=D "${PREV_TAG}" "${TAG_NAME}" >> delete.txt || true
+            git diff --name-only --diff-filter=D "${PREV_TAG}" "${TAG_NAME}" | grep -v "^\.git" | grep -v "^node_modules" | grep -v "^\.next" | grep -v "^local\.db" | grep -v "^\.env\.local" | grep -v "^appconfig\.json" >> delete.txt || true
           else
             echo "# No previous release tag found." > delete.txt
           fi
@@ -61,7 +62,7 @@ jobs:
 
           if [ -n "${PREV_TAG}" ]; then
             echo "Collecting modified and added files since ${PREV_TAG}..."
-            git diff --name-only --diff-filter=AM "${PREV_TAG}" "${TAG_NAME}" | while read -r file; do
+            git diff --name-only --diff-filter=AM "${PREV_TAG}" "${TAG_NAME}" | grep -v "^\.git" | grep -v "^node_modules" | grep -v "^\.next" | grep -v "^local\.db" | grep -v "^\.env\.local" | grep -v "^appconfig\.json" | while read -r file; do
               if [ -f "$file" ]; then
                 mkdir -p "update_package/$(dirname "$file")"
                 cp "$file" "update_package/$file"
@@ -69,15 +70,22 @@ jobs:
             done
           else
             echo "No previous tag found; generating source bundle in update package..."
-            rsync -av --exclude="node_modules" --exclude=".git" --exclude=".next" --exclude="local.db*" --exclude=".env.local" --exclude="appconfig.json" ./ update_package/
+            rsync -av --exclude="node_modules" --exclude=".git*" --exclude=".github*" --exclude=".next" --exclude="local.db*" --exclude=".env.local" --exclude="appconfig.json" ./ update_package/
           fi
 
           # Copy delete.txt into update package
           cp delete.txt update_package/delete.txt
 
-          # Create update package zip
+          # Create update package zip excluding git/github internal files
           cd update_package
-          zip -r "../${UPDATE_ARCHIVE}" .
+          zip -r "../${UPDATE_ARCHIVE}" . \
+            -x "*.git*" \
+            -x "*.github*" \
+            -x "node_modules/*" \
+            -x ".next/*" \
+            -x "local.db*" \
+            -x ".env.local" \
+            -x "appconfig.json"
           cd ..
           rm -rf update_package
 
