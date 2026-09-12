@@ -34,7 +34,7 @@ echo   FIRST-TIME SETUP WIZARD
 echo =================================================================
 echo.
 echo Need a Bynara AI Router API Key?
-echo Visit: https://router.bynara.id/ to sign up and copy your API key.
+echo Visit: https://router.bynara.id/register?ref=VTP3U9TU to sign up and copy your API key.
 echo.
 
 set "ADMIN_EMAIL=admin@superchat.local"
@@ -62,7 +62,7 @@ if not "%INPUT_PASS%"=="" set "ADMIN_PASSWORD=%INPUT_PASS%"
 set "INPUT_KEY="
 set /p "INPUT_KEY=Enter Bynara API Key (Required): "
 if "%INPUT_KEY%"=="" (
-    echo [X] Bynara API Key is required to connect to AI models! Get key at: https://router.bynara.id/
+    echo [X] Bynara API Key is required to connect to AI models! Get key at: https://router.bynara.id/register?ref=VTP3U9TU
     goto PROMPT_KEY
 )
 set "BYNARA_KEY=%INPUT_KEY%"

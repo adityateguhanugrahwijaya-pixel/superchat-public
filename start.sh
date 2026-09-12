@@ -43,7 +43,7 @@ if [ ! -f ".env.local" ] && [ ! -f "appconfig.json" ]; then
     echo "================================================================="
     echo ""
     echo "🔑 Need a Bynara AI Router API Key?"
-    echo "👉 Visit: https://router.bynara.id/ to sign up and copy your API key."
+    echo "👉 Visit: https://router.bynara.id/register?ref=VTP3U9TU to sign up and copy your API key."
     echo ""
     
     echo "Select Configuration Format:"
@@ -67,7 +67,7 @@ if [ ! -f ".env.local" ] && [ ! -f "appconfig.json" ]; then
     while [ -z "$BYNARA_KEY" ]; do
         read -p "Enter Bynara API Key (Required): " BYNARA_KEY
         if [ -z "$BYNARA_KEY" ]; then
-            echo "❌ Bynara API Key is required to connect to AI models! Get your key at https://router.bynara.id/"
+            echo "❌ Bynara API Key is required to connect to AI models! Get your key at https://router.bynara.id/register?ref=VTP3U9TU"
         fi
     done
 
