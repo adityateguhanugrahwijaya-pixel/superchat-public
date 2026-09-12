@@ -179,6 +179,9 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef<any>(null)
 
+  // Prevent background fetch race condition when creating a new chat locally
+  const skipFetchChatIdRef = useRef<string | null>(null)
+
   const openFileInCanvas = (filePath: string, title?: string) => {
     setCanvasFiles((prev) => {
       if (prev.some((f) => f.path === filePath)) return prev
@@ -245,6 +248,10 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   }, [initialChatId])
 
   useEffect(() => {
+    if (skipFetchChatIdRef.current === activeId) {
+      skipFetchChatIdRef.current = null
+      return
+    }
     if (activeId) {
       fetch(`/api/chats/${activeId}`)
         .then((r) => r.json())
@@ -356,6 +363,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     const isNew = !currentChatId
     if (isNew) {
       currentChatId = crypto.randomUUID()
+      skipFetchChatIdRef.current = currentChatId
       setActiveId(currentChatId)
       window.history.pushState(null, '', `/${currentChatId}`)
     }
@@ -431,10 +439,6 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => data && setUsage(data))
         .catch(() => {})
-
-      if (isNew) {
-        window.location.href = `/${currentChatId}`
-      }
     } catch (error: any) {
       const displayErr = error?.message || 'An error occurred while communicating with the router.'
       setMessages((current) =>
