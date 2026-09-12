@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { POPULAR_PROMPT_PRESETS } from '@/lib/presets'
+import { FileCard } from './file-card'
+import { ApprovalCard } from './approval-card'
+import { SideCanvas, CanvasFile } from './side-canvas'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -160,9 +163,61 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Voice Input (Speech-to-Text) State
-  const [isListening, setIsListening] = useState(false)
-  const recognitionRef = useRef<any>(null)
+  // Side Canvas & Sandbox State
+  const [canvasOpen, setCanvasOpen] = useState(false)
+  const [canvasFiles, setCanvasFiles] = useState<CanvasFile[]>([])
+  const [activeCanvasPath, setActiveCanvasPath] = useState<string | undefined>()
+
+  // High-Risk Tool Approval State
+  const [pendingApproval, setPendingApproval] = useState<{
+    toolName: string
+    reason?: string
+    params?: Record<string, any>
+  } | null>(null)
+
+  const openFileInCanvas = (filePath: string, title?: string) => {
+    setCanvasFiles((prev) => {
+      if (prev.some((f) => f.path === filePath)) return prev
+      return [...prev, { path: filePath, title: title || filePath.split('/').pop() }]
+    })
+    setActiveCanvasPath(filePath)
+    setCanvasOpen(true)
+  }
+
+  const handleApproveTool = async () => {
+    if (!pendingApproval || !activeId) return
+    const { toolName, params } = pendingApproval
+    setPendingApproval(null)
+
+    try {
+      const res = await fetch('/api/sandbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId: activeId, toolName, params, approved: true }),
+      })
+      const data = await res.json()
+      if (data.filePath) {
+        openFileInCanvas(data.filePath, data.fileTitle)
+      }
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `✅ Tool Executed (${toolName}):\n\`\`\`\n${data.output || data.error || 'Done'}\n\`\`\`` },
+      ])
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `❌ Execution Failed: ${err.message}` },
+      ])
+    }
+  }
+
+  const handleRejectTool = () => {
+    setPendingApproval(null)
+    setMessages((prev) => [
+      ...prev,
+      { role: 'assistant', content: `🛑 Action Rejected by User.` },
+    ])
+  }
 
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeId), [chats, activeId])
 
@@ -718,12 +773,31 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                             </details>
                           )}
                           {message.role === 'assistant' ? (
-                            <ReactMarkdown
-                              remarkPlugins={[remarkGfm]}
-                              components={{ code: CodeBlock }}
-                            >
-                              {parsedContent || (thinking ? '' : 'Thinking…')}
-                            </ReactMarkdown>
+                            <>
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{ code: CodeBlock }}
+                              >
+                                {parsedContent || (thinking ? '' : 'Thinking…')}
+                              </ReactMarkdown>
+                              {(() => {
+                                const fileTags: Array<{ path: string; title: string }> = []
+                                const regex = /<file\s+path=["']([^"']+)["'][^>]*>(.*?)<\/file>/gi
+                                let match
+                                while ((match = regex.exec(parsedContent)) !== null) {
+                                  fileTags.push({ path: match[1], title: match[2] || match[1] })
+                                }
+                                return fileTags.map((file, fIdx) => (
+                                  <FileCard
+                                    key={`${file.path}-${fIdx}`}
+                                    chatId={activeId || 'default'}
+                                    path={file.path}
+                                    title={file.title}
+                                    onView={(p, t) => openFileInCanvas(p, t)}
+                                  />
+                                ))
+                              })()}
+                            </>
                           ) : (
                             message.content
                           )}
@@ -739,6 +813,16 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                   </article>
                 )
               })
+            )}
+
+            {pendingApproval && (
+              <ApprovalCard
+                toolName={pendingApproval.toolName}
+                reason={pendingApproval.reason}
+                params={pendingApproval.params}
+                onApprove={handleApproveTool}
+                onReject={handleRejectTool}
+              />
             )}
           </div>
         </div>
@@ -827,6 +911,15 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
           <p className="disclaimer">SuperChat can make mistakes. Check important information.</p>
         </div>
       </section>
+
+      <SideCanvas
+        chatId={activeId || 'default'}
+        open={canvasOpen}
+        files={canvasFiles}
+        activePath={activeCanvasPath}
+        onClose={() => setCanvasOpen(false)}
+        onSelectFile={(path) => setActiveCanvasPath(path)}
+      />
     </main>
   )
 }

@@ -75,15 +75,34 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Build message history
-  const systemMessage = []
-  if (searchGroundingPrompt) {
-    systemMessage.push({ role: 'system', content: searchGroundingPrompt })
+  // Build system message capabilities
+  const capabilityPrompts: string[] = []
+
+  // Workspace & File Serving System Instruction
+  capabilityPrompts.push(
+    `[System Workspace & File Serving Capabilities]\n` +
+      `You are SuperChat AI, an intelligent coding and thinking partner. You have an active isolated workspace sandbox for this conversation.\n` +
+      `When you create or serve files (such as python/javascript code, documents, images, PDFs, or Excel spreadsheets), wrap the file reference using XML file tags:\n` +
+      `<file path="filename.ext">Display Title</file>\n` +
+      `This will automatically render an interactive File Card in the user's chat, allowing them to view and download the file in their Side Canvas.`
+  )
+
+  if (enableWebSearch) {
+    capabilityPrompts.push(
+      `[Web Search Status: ACTIVE]\n` +
+        `Live Web Search Grounding is ENABLED for this request. You have access to real-time internet search context.`
+    )
+    if (searchGroundingPrompt) {
+      capabilityPrompts.push(searchGroundingPrompt)
+    }
   }
+
   const effectiveSystemPrompt = chat.systemPrompt || settings?.globalSystemPrompt || ''
   if (effectiveSystemPrompt) {
-    systemMessage.push({ role: 'system', content: effectiveSystemPrompt })
+    capabilityPrompts.push(effectiveSystemPrompt)
   }
+
+  const systemMessage = capabilityPrompts.map((text) => ({ role: 'system', content: text }))
 
 
   const history = chat.messages.map((m) => ({ role: m.role, content: m.content }))

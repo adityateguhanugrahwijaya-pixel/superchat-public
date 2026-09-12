@@ -1,4 +1,5 @@
 import https from 'node:https'
+import http from 'node:http'
 
 export type SearchResultItem = {
   title: string
@@ -13,32 +14,28 @@ export type WebSearchResult = {
   results: SearchResultItem[]
 }
 
-function fetchJson(url: string, headers: Record<string, string> = {}): Promise<any> {
+function fetchText(targetUrl: string, headers: Record<string, string> = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    const req = https.get(
-      url,
+    const client = targetUrl.startsWith('https') ? https : http
+    const req = client.get(
+      targetUrl,
       {
         rejectUnauthorized: false,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           ...headers,
         },
       },
       (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           if (res.headers.location.startsWith('http')) {
-            return fetchJson(res.headers.location, headers).then(resolve).catch(reject)
+            return fetchText(res.headers.location, headers).then(resolve).catch(reject)
           }
         }
         let data = ''
         res.on('data', (chunk) => (data += chunk))
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data))
-          } catch (err) {
-            reject(err)
-          }
-        })
+        res.on('end', () => resolve(data))
       }
     )
     req.on('error', reject)
@@ -54,14 +51,38 @@ export async function performWebSearch(query: string): Promise<WebSearchResult> 
   const results: SearchResultItem[] = []
   const seenTitles = new Set<string>()
 
-  // 1. Search Wikipedia API (Free, high quality general knowledge)
+  // 1. DuckDuckGo Instant Answer / HTML Search (Free universal web search)
+  try {
+    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQuery)}`
+    const ddgHtml = await fetchText(ddgUrl)
+    const regex = /<a class="result__snippet[^>]* href="([^"]+)"[^>]*>(.*?)<\/a>/g
+    let match
+    let count = 0
+    while ((match = regex.exec(ddgHtml)) !== null && count < 4) {
+      const rawUrl = match[1]
+      const snippet = match[2].replace(/<[^>]+>/g, '').trim()
+      if (snippet && !seenTitles.has(snippet.toLowerCase())) {
+        seenTitles.add(snippet.toLowerCase())
+        results.push({
+          title: `Web Result ${count + 1}`,
+          url: rawUrl,
+          snippet,
+          source: 'DuckDuckGo Web',
+        })
+        count++
+      }
+    }
+  } catch {
+    /* fallback silently */
+  }
+
+  // 2. Wikipedia Search API (Free general knowledge)
   try {
     const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
       cleanQuery
     )}&utf8=&format=json`
-    const wikiData = await fetchJson(wikiUrl, {
-      'User-Agent': 'SuperChatApp/1.0 (contact@superchat.local)',
-    })
+    const rawWiki = await fetchText(wikiUrl, { 'User-Agent': 'SuperChatApp/1.0' })
+    const wikiData = JSON.parse(rawWiki)
     const wikiList = wikiData?.query?.search || []
     for (const item of wikiList.slice(0, 3)) {
       const title = String(item.title || '').trim()
@@ -72,7 +93,6 @@ export async function performWebSearch(query: string): Promise<WebSearchResult> 
         .replace(/<[^>]+>/g, '')
         .replace(/&quot;/g, '"')
         .replace(/&amp;/g, '&')
-        .replace(/&#039;/g, "'")
         .trim()
       const url = `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/\s+/g, '_'))}`
       if (snippet) {
@@ -83,43 +103,14 @@ export async function performWebSearch(query: string): Promise<WebSearchResult> 
     /* fallback silently */
   }
 
-  // 2. Search Wikinews API (Free, news & current affairs context)
-  try {
-    const newsUrl = `https://en.wikinews.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
-      cleanQuery
-    )}&utf8=&format=json`
-    const newsData = await fetchJson(newsUrl, {
-      'User-Agent': 'SuperChatApp/1.0 (contact@superchat.local)',
-    })
-    const newsList = newsData?.query?.search || []
-    for (const item of newsList.slice(0, 3)) {
-      const title = String(item.title || '').trim()
-      if (!title || seenTitles.has(title.toLowerCase())) continue
-      seenTitles.add(title.toLowerCase())
-
-      const snippet = String(item.snippet || '')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&quot;/g, '"')
-        .replace(/&amp;/g, '&')
-        .replace(/&#039;/g, "'")
-        .trim()
-      const url = `https://en.wikinews.org/wiki/${encodeURIComponent(title.replace(/\s+/g, '_'))}`
-      if (snippet) {
-        results.push({ title, url, snippet, source: 'Wikinews' })
-      }
-    }
-  } catch {
-    /* fallback silently */
-  }
-
   // Build formatted grounding prompt text
   let formattedContext = ''
   if (results.length > 0) {
-    formattedContext = `[Web Search Grounding Data for "${cleanQuery}"]\n`
+    formattedContext = `[Web Search Grounding Context for "${cleanQuery}"]\n`
     results.forEach((item, index) => {
-      formattedContext += `Source [${index + 1}] (${item.source}): ${item.title} (${item.url})\nSnippet: ${item.snippet}\n\n`
+      formattedContext += `Source [${index + 1}] (${item.source}): ${item.title}\nURL: ${item.url}\nSnippet: ${item.snippet}\n\n`
     })
-    formattedContext += `Instructions: Use the above real-time Web Search Grounding Data to inform your answer. Cite your sources using [1], [2], etc., when referencing specific facts.`
+    formattedContext += `Instructions: Use the above real-time Web Search Grounding Context to answer the user accurately. Cite sources when referencing specific web facts.`
   }
 
   return {
@@ -128,4 +119,3 @@ export async function performWebSearch(query: string): Promise<WebSearchResult> 
     results,
   }
 }
-
