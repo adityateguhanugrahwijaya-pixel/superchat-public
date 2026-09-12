@@ -102,8 +102,8 @@ else
     echo "✓ Configuration file found (.env.local / appconfig.json)."
 fi
 
-# 4. Build application if missing
-if [ ! -d ".next" ]; then
+# 4. Build application if missing or incomplete
+if [ ! -f ".next/BUILD_ID" ]; then
     echo ""
     echo "🔨 Building production app (npm run build)..."
     npm run build

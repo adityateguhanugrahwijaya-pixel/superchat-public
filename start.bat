@@ -112,7 +112,7 @@ echo [OK] Created appconfig.json configuration file.
 echo [OK] Created .env.local configuration file.
 
 :BUILD_APP
-if exist ".next\" goto LAUNCH_APP
+if exist ".next\BUILD_ID" goto LAUNCH_APP
 echo.
 echo Building production app (npm run build)...
 call npm run build
