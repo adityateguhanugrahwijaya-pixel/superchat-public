@@ -41,14 +41,6 @@ set "ADMIN_EMAIL=admin@superchat.local"
 set "ADMIN_NAME=SuperChat Admin"
 set "ADMIN_PASSWORD=AdminPassword123!"
 set "BYNARA_KEY="
-set "CHOICE=1"
-
-echo Select Configuration Format:
-echo   1. .env.local - Environment Variables File (Recommended)
-echo   2. appconfig.json - JSON Configuration File
-echo   3. Both (.env.local and appconfig.json)
-set /p "CHOICE=Select choice [1-3, default: 1]: "
-
 set /p "INPUT_EMAIL=Enter Admin Email [default: admin@superchat.local]: "
 if not "%INPUT_EMAIL%"=="" set "ADMIN_EMAIL=%INPUT_EMAIL%"
 
@@ -67,49 +59,28 @@ if "%INPUT_KEY%"=="" (
 )
 set "BYNARA_KEY=%INPUT_KEY%"
 
-if "%CHOICE%"=="1" goto WRITE_ENV
-if "%CHOICE%"=="3" goto WRITE_BOTH
-
-:WRITE_JSON
 (
     echo {
     echo   "admin": {
     echo     "email": "%ADMIN_EMAIL%",
     echo     "name": "%ADMIN_NAME%",
     echo     "password": "%ADMIN_PASSWORD%"
-    echo   },
-    echo   "bynaraApiKey": "%BYNARA_KEY%",
-    echo   "sqlitePath": "local.db"
+    echo   }
     echo }
 ) > appconfig.json
-echo [OK] Created appconfig.json configuration file.
-goto BUILD_APP
+echo [OK] Created appconfig.json (Admin account configuration).
 
-:WRITE_BOTH
-(
-    echo {
-    echo   "admin": {
-    echo     "email": "%ADMIN_EMAIL%",
-    echo     "name": "%ADMIN_NAME%",
-    echo     "password": "%ADMIN_PASSWORD%"
-    echo   },
-    echo   "bynaraApiKey": "%BYNARA_KEY%",
-    echo   "sqlitePath": "local.db"
-    echo }
-) > appconfig.json
-echo [OK] Created appconfig.json configuration file.
+set "AUTH_SECRET=superchat_secret_key_bynara_auth_32bytes_random_hex_secret"
+for /f "tokens=*" %%a in ('node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2^>nul') do set "AUTH_SECRET=%%a"
 
-:WRITE_ENV
 (
     echo # SuperChat Environment Configuration
-    echo ADMIN_EMAIL=%ADMIN_EMAIL%
-    echo ADMIN_NAME=%ADMIN_NAME%
-    echo ADMIN_PASSWORD=%ADMIN_PASSWORD%
     echo BYNARA_API_KEY=%BYNARA_KEY%
-    echo SQLITE_PATH=local.db
+    echo BETTER_AUTH_SECRET=%AUTH_SECRET%
     echo BETTER_AUTH_URL=http://localhost:3000
+    echo SQLITE_PATH=local.db
 ) > .env.local
-echo [OK] Created .env.local configuration file.
+echo [OK] Created .env.local (API Key & Auth Secret configuration).
 
 :BUILD_APP
 if exist ".next\BUILD_ID" goto LAUNCH_APP

@@ -34,7 +34,10 @@ const origins = [
   originFromHost(process.env.VERCEL_PROJECT_PRODUCTION_URL),
 ].filter((origin): origin is string => Boolean(origin))
 
+export const authSecret = process.env.BETTER_AUTH_SECRET?.trim() || 'superchat_default_secret_key_bynara_auth_32bytes_min'
+
 export const auth = betterAuth({
+  secret: authSecret,
   database: sqlite,
   baseURL,
   trustedOrigins: origins,

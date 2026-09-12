@@ -45,14 +45,6 @@ if [ ! -f ".env.local" ] && [ ! -f "appconfig.json" ]; then
     echo "🔑 Need a Bynara AI Router API Key?"
     echo "👉 Visit: https://router.bynara.id/register?ref=VTP3U9TU to sign up and copy your API key."
     echo ""
-    
-    echo "Select Configuration Format:"
-    echo "  1) .env.local (Environment Variables File - Recommended)"
-    echo "  2) appconfig.json (JSON Configuration File)"
-    echo "  3) Both (.env.local and appconfig.json)"
-    read -p "Select choice [1-3, default: 1]: " CONFIG_CHOICE
-    CONFIG_CHOICE=${CONFIG_CHOICE:-1}
-
     echo ""
     read -p "Enter Admin Email [default: admin@superchat.local]: " INPUT_EMAIL
     ADMIN_EMAIL=${INPUT_EMAIL:-admin@superchat.local}
@@ -71,33 +63,27 @@ if [ ! -f ".env.local" ] && [ ! -f "appconfig.json" ]; then
         fi
     done
 
-    if [ "$CONFIG_CHOICE" = "1" ] || [ "$CONFIG_CHOICE" = "3" ]; then
-        cat <<EOF > .env.local
-# SuperChat Environment Configuration
-ADMIN_EMAIL=${ADMIN_EMAIL}
-ADMIN_NAME=${ADMIN_NAME}
-ADMIN_PASSWORD=${ADMIN_PASSWORD}
-BYNARA_API_KEY=${BYNARA_KEY}
-SQLITE_PATH=local.db
-BETTER_AUTH_URL=http://localhost:3000
-EOF
-        echo "✓ Created .env.local configuration file."
-    fi
+    AUTH_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null || echo "superchat_secret_key_bynara_auth_32bytes_min")
 
-    if [ "$CONFIG_CHOICE" = "2" ] || [ "$CONFIG_CHOICE" = "3" ]; then
-        cat <<EOF > appconfig.json
+    cat <<EOF > appconfig.json
 {
   "admin": {
     "email": "${ADMIN_EMAIL}",
     "name": "${ADMIN_NAME}",
     "password": "${ADMIN_PASSWORD}"
-  },
-  "bynaraApiKey": "${BYNARA_KEY}",
-  "sqlitePath": "local.db"
+  }
 }
 EOF
-        echo "✓ Created appconfig.json configuration file."
-    fi
+    echo "✓ Created appconfig.json (Admin account configuration)."
+
+    cat <<EOF > .env.local
+# SuperChat Environment Configuration
+BYNARA_API_KEY=${BYNARA_KEY}
+BETTER_AUTH_SECRET=${AUTH_SECRET}
+BETTER_AUTH_URL=http://localhost:3000
+SQLITE_PATH=local.db
+EOF
+    echo "✓ Created .env.local (API Key & Auth Secret configuration)."
 else
     echo "✓ Configuration file found (.env.local / appconfig.json)."
 fi
