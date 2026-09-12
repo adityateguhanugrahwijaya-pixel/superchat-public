@@ -175,6 +175,10 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     params?: Record<string, any>
   } | null>(null)
 
+  // Voice Dictation State
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef<any>(null)
+
   const openFileInCanvas = (filePath: string, title?: string) => {
     setCanvasFiles((prev) => {
       if (prev.some((f) => f.path === filePath)) return prev
