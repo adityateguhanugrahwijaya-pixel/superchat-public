@@ -89,6 +89,24 @@ jobs:
           cd ..
           rm -rf update_package
 
+          # Generate SHA256 checksums and update-manifest.json
+          UPDATE_SHA256=$(sha256sum "${UPDATE_ARCHIVE}" | awk '{print $1}')
+          FULL_SHA256=$(sha256sum "${FULL_ARCHIVE}" | awk '{print $1}')
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          cat <<EOF > update-manifest.json
+{
+  "version": "${TAG_NAME#v}",
+  "tagName": "${TAG_NAME}",
+  "previousTag": "${PREV_TAG}",
+  "fullArchive": "${FULL_ARCHIVE}",
+  "updateArchive": "${UPDATE_ARCHIVE}",
+  "updateSha256": "${UPDATE_SHA256}",
+  "fullSha256": "${FULL_SHA256}",
+  "publishedAt": "${BUILD_TIME}"
+}
+EOF
+
           echo "FULL_ARCHIVE=${FULL_ARCHIVE}" >> $GITHUB_ENV
           echo "UPDATE_ARCHIVE=${UPDATE_ARCHIVE}" >> $GITHUB_ENV
 
@@ -98,6 +116,7 @@ jobs:
           files: |
             ${{ env.FULL_ARCHIVE }}
             ${{ env.UPDATE_ARCHIVE }}
+            update-manifest.json
           draft: false
           prerelease: false
           generate_release_notes: true
