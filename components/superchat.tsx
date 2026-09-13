@@ -21,6 +21,7 @@ import {
   PanelLeft,
   Paperclip,
   Pencil,
+  Search,
   Send,
   Settings2,
   Sparkles,
@@ -146,6 +147,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   const [streaming, setStreaming] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [historySearch, setHistorySearch] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
@@ -577,20 +579,42 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
         <button className="new-chat-button" onClick={handleNewConversation}>
           <MessageSquarePlus size={18} /> New conversation <span>⌘ K</span>
         </button>
+        {chats.length > 3 && (
+          <div className="history-search-input">
+            <Search size={13} style={{ color: 'var(--muted-foreground)' }} />
+            <input
+              type="text"
+              placeholder="Search conversations..."
+              value={historySearch}
+              onChange={(e) => setHistorySearch(e.target.value)}
+            />
+            {historySearch && (
+              <button
+                type="button"
+                onClick={() => setHistorySearch('')}
+                style={{ border: 0, background: 'transparent', color: 'var(--muted-foreground)', padding: 0, cursor: 'pointer' }}
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+        )}
         <div className="history-label">Your conversations <span>{chats.length}</span></div>
         <nav className="chat-history" aria-label="Chat history">
-          {chats.map((chat) => (
-            <div key={chat.id} className={`history-item ${chat.id === activeId ? 'active' : ''}`}>
-              <button onClick={() => selectChat(chat.id)}>
-                <MessageSquarePlus size={15} />
-                <span>{chat.title}</span>
-              </button>
-              <div className="history-actions">
-                <button onClick={() => renameChat(chat)} aria-label="Rename chat"><Pencil size={14} /></button>
-                <button onClick={() => deleteChat(chat.id)} aria-label="Delete chat"><Trash2 size={14} /></button>
+          {chats
+            .filter((c) => c.title.toLowerCase().includes(historySearch.toLowerCase()))
+            .map((chat) => (
+              <div key={chat.id} className={`history-item ${chat.id === activeId ? 'active' : ''}`}>
+                <button onClick={() => selectChat(chat.id)}>
+                  <MessageSquarePlus size={15} />
+                  <span>{chat.title}</span>
+                </button>
+                <div className="history-actions">
+                  <button onClick={() => renameChat(chat)} aria-label="Rename chat"><Pencil size={14} /></button>
+                  <button onClick={() => deleteChat(chat.id)} aria-label="Delete chat"><Trash2 size={14} /></button>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
         </nav>
         <div className="sidebar-footer">
           <div className="profile-dot" title={usage.userEmail || userDisplayName}>
