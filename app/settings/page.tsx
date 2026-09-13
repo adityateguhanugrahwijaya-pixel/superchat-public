@@ -398,7 +398,7 @@ export default function SettingsPage() {
       </header>
 
       {/* Tabs Navigation */}
-      <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', marginBottom: 24, paddingBottom: 2 }}>
+      <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', marginBottom: 24, paddingBottom: 2, overflowX: 'auto', flexWrap: 'nowrap', maxWidth: '100%' }}>
         <button
           onClick={() => setActiveTab('api')}
           style={{
@@ -1354,8 +1354,21 @@ export default function SettingsPage() {
                   type="button"
                   onClick={checkAppUpdate}
                   disabled={checkingUpdate}
-                  className="icon-button"
-                  style={{ padding: '8px 14px', height: 'auto', borderRadius: 6, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}
+                  style={{
+                    padding: '8px 16px',
+                    height: 'auto',
+                    borderRadius: 8,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    border: '1px solid var(--border)',
+                    background: 'var(--white)',
+                    color: 'var(--foreground)',
+                    cursor: checkingUpdate ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                  }}
                 >
                   <RefreshCw size={14} className={checkingUpdate ? 'spin' : ''} />
                   {checkingUpdate ? 'Checking...' : 'Check for Updates'}
