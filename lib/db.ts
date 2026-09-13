@@ -128,6 +128,27 @@ try {
   sqlite.exec(`ALTER TABLE user_settings ADD COLUMN sandbox_enabled INTEGER DEFAULT 1`)
 } catch {}
 
+// Ensure account and session table columns (both snake_case and camelCase) stay 100% in sync
+try {
+  sqlite.exec(`
+    UPDATE "account" SET 
+      user_id = COALESCE(user_id, userId),
+      userId = COALESCE(userId, user_id),
+      provider_id = COALESCE(provider_id, providerId),
+      providerId = COALESCE(providerId, provider_id),
+      account_id = COALESCE(account_id, accountId),
+      accountId = COALESCE(accountId, account_id)
+    WHERE user_id IS NULL OR userId IS NULL OR provider_id IS NULL OR providerId IS NULL OR account_id IS NULL OR accountId IS NULL;
+
+    UPDATE "session" SET
+      user_id = COALESCE(user_id, userId),
+      userId = COALESCE(userId, user_id),
+      expires_at = COALESCE(expires_at, expiresAt),
+      expiresAt = COALESCE(expiresAt, expires_at)
+    WHERE user_id IS NULL OR userId IS NULL;
+  `)
+} catch {}
+
 export const db = sqlite
 
 // Auto-bootstrap or update configured Admin account in SQLite DB on app start

@@ -55,8 +55,16 @@ export function bootstrapAdminAccount() {
 
         if (existingAccount) {
           sqlite
-            .prepare('UPDATE account SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-            .run(hashedPassword, existingAccount.id)
+            .prepare(
+              `UPDATE account SET 
+                 password = ?, 
+                 user_id = ?, userId = ?, 
+                 provider_id = 'credential', providerId = 'credential', 
+                 account_id = ?, accountId = ?, 
+                 updated_at = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP 
+               WHERE id = ?`
+            )
+            .run(hashedPassword, existingUser.id, existingUser.id, adminEmail, adminEmail, existingAccount.id)
         } else {
           const accountId = crypto.randomUUID()
           sqlite
