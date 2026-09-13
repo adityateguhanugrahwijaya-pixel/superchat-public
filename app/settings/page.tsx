@@ -24,7 +24,7 @@ import {
   User,
 } from 'lucide-react'
 
-type SettingsTab = 'api' | 'account' | 'instructions' | 'usage' | 'data'
+type SettingsTab = 'api' | 'account' | 'instructions' | 'usage' | 'data' | 'updates'
 
 type UsageHistoryItem = { date: string; tokens: number; requests: number }
 type ModelUsageItem = { model: string; tokens: number; requests: number }
@@ -95,6 +95,63 @@ export default function SettingsPage() {
   const [deletingAll, setDeletingAll] = useState(false)
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
   const [dataMsg, setDataMsg] = useState<{ ok: boolean; message: string } | null>(null)
+
+  // App Auto-Updater States
+  const [updateInfo, setUpdateInfo] = useState<any>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [installingUpdate, setInstallingUpdate] = useState(false)
+  const [updateMsg, setUpdateMsg] = useState<{ ok: boolean; message: string } | null>(null)
+
+  useEffect(() => {
+    // Check update on mount
+    fetch('/api/update')
+      .then((r) => r.json())
+      .then((data) => setUpdateInfo(data))
+      .catch(() => {})
+  }, [])
+
+  async function checkAppUpdate() {
+    setCheckingUpdate(true)
+    setUpdateMsg(null)
+    try {
+      const res = await fetch('/api/update')
+      const data = await res.json()
+      setUpdateInfo(data)
+      if (!data.hasUpdate) {
+        setUpdateMsg({ ok: true, message: `SuperChat is up to date (v${data.currentVersion})!` })
+      }
+    } catch {
+      setUpdateMsg({ ok: false, message: 'Failed to connect to GitHub Release API.' })
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
+
+  async function triggerAppUpdate() {
+    if (installingUpdate) return
+    setInstallingUpdate(true)
+    setUpdateMsg(null)
+    try {
+      const res = await fetch('/api/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          downloadUrl: updateInfo?.downloadUrl,
+          checksumSha256: updateInfo?.checksumSha256,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setUpdateMsg({ ok: true, message: '🚀 Update launched! Application is updating and restarting in the background...' })
+      } else {
+        setUpdateMsg({ ok: false, message: data.error || 'Failed to trigger update process.' })
+      }
+    } catch {
+      setUpdateMsg({ ok: true, message: '🚀 Update launched! Application is restarting...' })
+    } finally {
+      setInstallingUpdate(false)
+    }
+  }
 
   async function exportChatData() {
     setExporting(true)
@@ -419,6 +476,38 @@ export default function SettingsPage() {
           }}
         >
           <Database size={16} /> Data & Privacy
+        </button>
+
+        <button
+          onClick={() => setActiveTab('updates')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 16px',
+            border: 0,
+            background: activeTab === 'updates' ? 'var(--white)' : 'transparent',
+            color: activeTab === 'updates' ? 'var(--primary)' : 'var(--muted-foreground)',
+            fontWeight: activeTab === 'updates' ? 600 : 500,
+            borderRadius: '8px 8px 0 0',
+            borderBottom: activeTab === 'updates' ? '2px solid var(--primary)' : '2px solid transparent',
+            fontSize: 13,
+            position: 'relative',
+          }}
+        >
+          <RefreshCw size={16} /> Updates
+          {updateInfo?.hasUpdate && (
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: '#16a34a',
+                display: 'inline-block',
+                marginLeft: 2,
+              }}
+            />
+          )}
         </button>
       </div>
 
@@ -1161,6 +1250,107 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+          </article>
+        </div>
+      )}
+
+      {/* Tab 6: Updates */}
+      {activeTab === 'updates' && (
+        <div className="admin-grid">
+          <article className="admin-wide" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <div>
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                <RefreshCw size={18} color="var(--primary)" /> SuperChat Auto-Updater
+              </h2>
+              <p style={{ margin: '4px 0 14px', fontSize: 13, color: 'var(--muted-foreground)' }}>
+                Check for official GitHub releases, inspect patch metadata, and perform 1-click application updates.
+              </p>
+            </div>
+
+            {updateMsg && (
+              <div
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  background: updateMsg.ok ? '#f0fdf4' : '#fef2f2',
+                  color: updateMsg.ok ? '#166534' : '#991b1b',
+                  border: `1px solid ${updateMsg.ok ? '#bbf7d0' : '#fecaca'}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                {updateMsg.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                <span>{updateMsg.message}</span>
+              </div>
+            )}
+
+            <div style={{ padding: 18, background: 'var(--background)', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <strong style={{ fontSize: 14 }}>Current App Version</strong>
+                  <div style={{ fontSize: 13, color: 'var(--muted-foreground)', marginTop: 2 }}>
+                    v{updateInfo?.currentVersion || '1.0.7'}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={checkAppUpdate}
+                  disabled={checkingUpdate}
+                  className="icon-button"
+                  style={{ padding: '8px 14px', height: 'auto', borderRadius: 6, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <RefreshCw size={14} className={checkingUpdate ? 'spin' : ''} />
+                  {checkingUpdate ? 'Checking...' : 'Check for Updates'}
+                </button>
+              </div>
+
+              {updateInfo?.hasUpdate ? (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ padding: 12, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#166534' }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Sparkles size={16} color="#16a34a" /> Update Available: {updateInfo.latestVersion} ({updateInfo.isDifferential ? 'Differential Patch ~' + Math.round(updateInfo.downloadSize / 1024) + ' KB' : 'Full Release ~' + Math.round(updateInfo.downloadSize / 1024) + ' KB'})
+                    </div>
+                    {updateInfo.releaseNotes && (
+                      <p style={{ margin: '8px 0 0', fontSize: 12, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                        {updateInfo.releaseNotes}
+                      </p>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={triggerAppUpdate}
+                      disabled={installingUpdate}
+                      style={{
+                        padding: '10px 18px',
+                        borderRadius: 8,
+                        border: 0,
+                        background: 'var(--primary)',
+                        color: 'var(--white)',
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: installingUpdate ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        boxShadow: '0 2px 8px #00000015',
+                      }}
+                    >
+                      <Download size={16} />
+                      {installingUpdate ? 'Updating & Restarting…' : 'Install Update Now'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--muted-foreground)', marginTop: 4 }}>
+                  ✓ You are running the latest version of SuperChat.
+                </div>
+              )}
+            </div>
           </article>
         </div>
       )}
