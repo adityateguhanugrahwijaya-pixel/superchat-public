@@ -57,6 +57,38 @@
 
 ---
 
+## 💻 System Requirements & Disk Space Estimate
+
+### Minimum System Requirements:
+- **Node.js**: v18.0.0 or higher (v20+ recommended)
+- **NPM**: v9.0.0 or higher
+- **Memory (RAM)**: 1 GB minimum (2 GB recommended for building)
+- **Operating System**: Linux (Ubuntu, Debian, Termux), macOS, or Windows 10/11
+
+### Estimated Disk Footprint:
+- **Source Zip Download**: ~1 MB
+- **Extracted Source Code**: ~2.5 MB
+- **`node_modules` Dependencies**: ~120 MB – 150 MB
+- **Next.js Production Build (`.next`)**: ~60 MB – 90 MB
+- **Total Storage Space Required**: **~200 MB – 250 MB**
+
+---
+
+## 🔑 Bynara AI Router API Key & Verification
+
+SuperChat integrates natively with **Bynara AI Router** (`https://router.bynara.id/v1`) to provide high-speed LLM completions (`agnes-2.5-flash`, `deepseek-v4-flash`, `deepseek-v4-pro`).
+
+> [!NOTE]
+> **Bynara Verification & Daily Free Tokens**:
+> To unlock Bynara's **7 Million Daily Free Tokens**, Bynara requires a one-time minimum verification deposit of **$1 USD (approx. Rp 17.000 – Rp 18.000 IDR)**.
+> 
+> 💡 **Transparency & Referral Disclaimer**:
+> The $1 USD goes directly into your Bynara API account balance for verification. Registering via our referral link helps support SuperChat's open-source development — the maintainer receives a small percentage referral commission cut (not the whole $1).
+> 
+> 👉 **Register & Get API Key**: [https://router.bynara.id/register?ref=VTP3U9TU](https://router.bynara.id/register?ref=VTP3U9TU)
+
+---
+
 ## 📦 Getting Started
 
 ### ⚡ 1-Click Automated Setup & Launcher (Recommended)
