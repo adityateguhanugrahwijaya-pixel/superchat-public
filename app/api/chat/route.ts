@@ -93,7 +93,8 @@ export async function POST(request: NextRequest) {
   if (enableWebSearch) {
     capabilityPrompts.push(
       `[Web Search Status: ACTIVE]\n` +
-        `Live Web Search Grounding is ENABLED for this request. You have access to real-time internet search context.`
+        `Live Web Search Grounding is ENABLED. You have access to real-time internet search context.\n` +
+        `When referencing web search information, cite sources clearly using markdown links [Source Title](URL) so the user can easily view and verify web sources.`
     )
     if (searchGroundingPrompt) {
       capabilityPrompts.push(searchGroundingPrompt)

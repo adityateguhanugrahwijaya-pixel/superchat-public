@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Copy,
   Download,
+  ExternalLink,
   FileText,
   Globe,
   Mic,
@@ -144,6 +145,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
@@ -562,7 +564,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
 
   return (
     <main className="superchat-shell">
-      <aside className={`chat-sidebar ${sidebarOpen ? 'is-open' : ''}`}>
+      <aside className={`chat-sidebar ${sidebarOpen ? 'is-open' : ''} ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
         <div className="sidebar-brand">
           <div className="brand-mark">
             <SuperChatLogo size={18} />
@@ -612,8 +614,19 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
 
       <section className="chat-main">
         <header className="topbar">
-          <button className="icon-button menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar">
-            <PanelLeft size={19} />
+          <button
+            type="button"
+            className="sidebar-toggle-btn"
+            onClick={() => {
+              if (typeof window !== 'undefined' && window.innerWidth <= 720) {
+                setSidebarOpen(!sidebarOpen)
+              } else {
+                setSidebarCollapsed(!sidebarCollapsed)
+              }
+            }}
+            title={sidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+          >
+            <PanelLeft size={18} />
           </button>
           <div className="mobile-title">
             <div className="brand-mark" style={{ width: 25, height: 25 }}>
@@ -795,6 +808,52 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                           )}
                           {message.role === 'assistant' ? (
                             <>
+                              {(() => {
+                                const sources: Array<{ title: string; url: string; domain: string }> = []
+                                const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/gi
+                                let match
+                                while ((match = linkRegex.exec(parsedContent)) !== null) {
+                                  const title = match[1].trim()
+                                  const url = match[2].trim()
+                                  if (!sources.some((s) => s.url === url)) {
+                                    let domain = url
+                                    try {
+                                      domain = new URL(url).hostname.replace(/^www\./, '')
+                                    } catch {}
+                                    sources.push({ title, url, domain })
+                                  }
+                                }
+
+                                if (sources.length === 0) return null
+
+                                return (
+                                  <div className="search-grounding-card">
+                                    <div className="search-grounding-header">
+                                      <div className="search-grounding-icon">
+                                        <Globe size={13} />
+                                      </div>
+                                      <span>Live Web Search Grounded ({sources.length} {sources.length === 1 ? 'Source' : 'Sources'})</span>
+                                    </div>
+                                    <div className="search-sources-grid">
+                                      {sources.map((s, sIdx) => (
+                                        <a
+                                          key={`${s.url}-${sIdx}`}
+                                          href={s.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="search-source-chip"
+                                          title={`${s.title} (${s.url})`}
+                                        >
+                                          <Globe size={13} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                                          <span>{s.title || s.domain}</span>
+                                          <span className="search-source-badge">{s.domain}</span>
+                                          <ExternalLink size={11} style={{ opacity: 0.6, flexShrink: 0 }} />
+                                        </a>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )
+                              })()}
                               <ReactMarkdown
                                 remarkPlugins={[remarkGfm]}
                                 components={{ code: CodeBlock }}
