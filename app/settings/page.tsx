@@ -5,10 +5,13 @@ import { POPULAR_PROMPT_PRESETS } from '@/lib/presets'
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   BarChart2,
   CheckCircle2,
   Cpu,
+  Database,
+  Download,
   Eye,
   EyeOff,
   Globe,
@@ -17,10 +20,11 @@ import {
   RefreshCw,
   Shield,
   Sparkles,
+  Trash2,
   User,
 } from 'lucide-react'
 
-type SettingsTab = 'api' | 'account' | 'instructions' | 'usage'
+type SettingsTab = 'api' | 'account' | 'instructions' | 'usage' | 'data'
 
 type UsageHistoryItem = { date: string; tokens: number; requests: number }
 type ModelUsageItem = { model: string; tokens: number; requests: number }
@@ -57,6 +61,8 @@ export default function SettingsPage() {
   const [showKey, setShowKey] = useState(false)
   const [globalPrompt, setGlobalPrompt] = useState('')
   const [hasSavedKey, setHasSavedKey] = useState(false)
+  const [globalSandboxEnabled, setGlobalSandboxEnabled] = useState(true)
+  const [userSandboxEnabled, setUserSandboxEnabled] = useState(true)
 
   // Account Profile States
   const [userName, setUserName] = useState('')
@@ -83,6 +89,55 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  // Data Management States
+  const [exporting, setExporting] = useState(false)
+  const [deletingAll, setDeletingAll] = useState(false)
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
+  const [dataMsg, setDataMsg] = useState<{ ok: boolean; message: string } | null>(null)
+
+  async function exportChatData() {
+    setExporting(true)
+    setDataMsg(null)
+    try {
+      const res = await fetch('/api/chats?export=true')
+      if (!res.ok) throw new Error('Failed to export chat data.')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const dateStr = new Date().toISOString().split('T')[0]
+      a.href = url
+      a.download = `superchat_export_${dateStr}.json`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+      setDataMsg({ ok: true, message: 'Chat data exported successfully!' })
+    } catch (err: any) {
+      setDataMsg({ ok: false, message: err.message || 'Error exporting chat data.' })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  async function deleteAllChats() {
+    setDeletingAll(true)
+    setDataMsg(null)
+    try {
+      const res = await fetch('/api/chats?all=true', { method: 'DELETE' })
+      const data = await res.json()
+      if (res.ok) {
+        setConfirmDeleteAll(false)
+        setDataMsg({ ok: true, message: `Successfully deleted all chat history (${data.deletedCount || 0} conversations removed).` })
+      } else {
+        setDataMsg({ ok: false, message: data.error || 'Failed to delete chat history.' })
+      }
+    } catch {
+      setDataMsg({ ok: false, message: 'Network error deleting chat history.' })
+    } finally {
+      setDeletingAll(false)
+    }
+  }
 
   // Usage & Stats Detailed States
   const [usageData, setUsageData] = useState<UsageData | null>(null)
@@ -119,6 +174,8 @@ export default function SettingsPage() {
         setUrl(s.customRouterUrl || '')
         setHasSavedKey(Boolean(s.hasCustomApiKey))
         setGlobalPrompt(s.globalSystemPrompt || '')
+        setGlobalSandboxEnabled(s.globalSandboxEnabled !== false)
+        setUserSandboxEnabled(s.userSandboxEnabled !== false)
         setUserName(s.userName || '')
         setNewUsername(s.userName || '')
         setUserEmail(s.userEmail || '')
@@ -142,6 +199,7 @@ export default function SettingsPage() {
           customRouterUrl: url,
           customApiKey: key || undefined,
           globalSystemPrompt: globalPrompt,
+          userSandboxEnabled,
         }),
       })
       if (res.ok) {
@@ -343,6 +401,25 @@ export default function SettingsPage() {
         >
           <Activity size={16} /> Usage & Stats
         </button>
+
+        <button
+          onClick={() => setActiveTab('data')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 16px',
+            border: 0,
+            background: activeTab === 'data' ? 'var(--white)' : 'transparent',
+            color: activeTab === 'data' ? 'var(--primary)' : 'var(--muted-foreground)',
+            fontWeight: activeTab === 'data' ? 600 : 500,
+            borderRadius: '8px 8px 0 0',
+            borderBottom: activeTab === 'data' ? '2px solid var(--primary)' : '2px solid transparent',
+            fontSize: 13,
+          }}
+        >
+          <Database size={16} /> Data & Privacy
+        </button>
       </div>
 
       {/* Tab 1: API & Router */}
@@ -505,6 +582,42 @@ export default function SettingsPage() {
                   </div>
                 )}
               </div>
+            </article>
+
+            {/* Sandbox & Autonomous Tools Settings Card */}
+            <article className="admin-wide" style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                  <Shield size={18} color="var(--primary)" /> Autonomous Sandbox Workspace
+                </h2>
+                <p style={{ margin: '4px 0 14px', fontSize: 13, color: 'var(--muted-foreground)' }}>
+                  Control whether SuperChat can execute autonomous sandbox tools (file operations, python/node scripts, shell commands) for your account.
+                </p>
+              </div>
+
+              {!globalSandboxEnabled ? (
+                <div style={{ padding: '12px 16px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, color: '#dc2626', fontSize: 13, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+                  <div>
+                    <strong>Sandbox System Unavailable:</strong> The isolated sandbox workspace system is disabled globally by the server administrator in <code>appconfig.json</code>.
+                  </div>
+                </div>
+              ) : (
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 16, background: '#fafafc', border: '1px solid var(--border)', borderRadius: 12, cursor: 'pointer' }}>
+                  <div>
+                    <strong style={{ display: 'block', fontSize: 14, color: 'var(--foreground)' }}>Enable Personal Sandbox Workspace</strong>
+                    <small style={{ color: 'var(--muted-foreground)', fontSize: 12 }}>
+                      Allows SuperChat AI to create, edit, run code, and manage files in your conversation sandbox directory.
+                    </small>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={userSandboxEnabled}
+                    onChange={(e) => setUserSandboxEnabled(e.target.checked)}
+                    style={{ width: 20, height: 20, accentColor: 'var(--primary)', cursor: 'pointer' }}
+                  />
+                </label>
+              )}
             </article>
           </div>
 
@@ -927,6 +1040,128 @@ export default function SettingsPage() {
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* Tab 5: Data & Privacy */}
+      {activeTab === 'data' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {dataMsg && (
+            <div
+              style={{
+                padding: '12px 16px',
+                borderRadius: 10,
+                fontSize: 13,
+                fontWeight: 500,
+                background: dataMsg.ok ? '#ecfdf5' : '#fef2f2',
+                color: dataMsg.ok ? '#047857' : '#b91c1c',
+                border: dataMsg.ok ? '1px solid #a7f3d0' : '1px solid #fecaca',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              {dataMsg.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+              {dataMsg.message}
+            </div>
+          )}
+
+          {/* Export Chat Data */}
+          <article className="admin-wide" style={{ padding: 22, borderRadius: 14, background: 'var(--white)', border: '1px solid var(--border)' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+              <Download size={18} color="var(--primary)" /> Export User Chat Data
+            </h2>
+            <p style={{ margin: '6px 0 18px', fontSize: 13, color: 'var(--muted-foreground)' }}>
+              Download a complete JSON archive of your conversation history, messages, system prompts, and AI model configurations.
+            </p>
+
+            <button
+              type="button"
+              onClick={exportChatData}
+              disabled={exporting}
+              className="primary-button"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, width: 'auto', padding: '10px 20px' }}
+            >
+              <Download size={15} />
+              {exporting ? 'Preparing export...' : 'Export Chat Data (JSON)'}
+            </button>
+          </article>
+
+          {/* Danger Zone: Delete All Chats */}
+          <article className="admin-wide" style={{ padding: 22, borderRadius: 14, background: '#fff5f5', border: '1px solid #fca5a5' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, color: '#dc2626' }}>
+              <Trash2 size={18} color="#dc2626" /> Delete All Chat History
+            </h2>
+            <p style={{ margin: '6px 0 18px', fontSize: 13, color: '#7f1d1d' }}>
+              Permanently purge all conversation files saved under your account (<code>chats/{userEmail}/</code>). This action is irreversible.
+            </p>
+
+            {!confirmDeleteAll ? (
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteAll(true)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '10px 20px',
+                  borderRadius: 9,
+                  border: 0,
+                  background: '#dc2626',
+                  color: 'white',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                <Trash2 size={15} /> Delete All Conversations
+              </button>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 14, background: 'white', borderRadius: 10, border: '1px solid #fca5a5', maxWidth: 460 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#b91c1c' }}>
+                  <AlertTriangle size={16} /> Are you sure you want to delete ALL chats?
+                </div>
+                <small style={{ color: 'var(--muted-foreground)', fontSize: 12 }}>
+                  This will permanently delete all conversation history files. You cannot undo this action.
+                </small>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                  <button
+                    type="button"
+                    onClick={deleteAllChats}
+                    disabled={deletingAll}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 7,
+                      border: 0,
+                      background: '#dc2626',
+                      color: 'white',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {deletingAll ? 'Deleting...' : 'Yes, Delete Everything'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteAll(false)}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 7,
+                      border: '1px solid var(--border)',
+                      background: 'var(--white)',
+                      color: 'var(--foreground)',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </article>
         </div>
       )}
     </main>

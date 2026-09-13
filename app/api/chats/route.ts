@@ -1,9 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/session'
-import { listUserChats, createChatFile, updateChatFile, deleteChatFile } from '@/lib/chats'
+import { listUserChats, createChatFile, updateChatFile, deleteChatFile, deleteAllUserChats, exportUserChats } from '@/lib/chats'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const user = await requireUser()
+  const searchParams = new URL(request.url).searchParams
+  const isExport = searchParams.get('export') === 'true'
+
+  if (isExport) {
+    const fullChats = exportUserChats(user.email)
+    const jsonString = JSON.stringify(fullChats, null, 2)
+    const dateStr = new Date().toISOString().split('T')[0]
+    const fileName = `superchat_export_${dateStr}.json`
+
+    return new Response(jsonString, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Disposition': `attachment; filename="${fileName}"`,
+      },
+    })
+  }
+
   const chats = listUserChats(user.email)
   return NextResponse.json(chats)
 }
@@ -38,7 +55,15 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   const user = await requireUser()
-  const id = new URL(request.url).searchParams.get('id')
+  const searchParams = new URL(request.url).searchParams
+  const isAll = searchParams.get('all') === 'true'
+  const id = searchParams.get('id')
+
+  if (isAll) {
+    const deletedCount = deleteAllUserChats(user.email)
+    return NextResponse.json({ ok: true, deletedCount })
+  }
+
   if (!id) return NextResponse.json({ error: 'Chat id is required' }, { status: 400 })
 
   deleteChatFile(user.email, id)

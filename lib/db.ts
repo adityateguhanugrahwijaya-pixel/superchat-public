@@ -124,6 +124,9 @@ try {
 try {
   sqlite.exec(`ALTER TABLE user_settings ADD COLUMN default_model TEXT`)
 } catch {}
+try {
+  sqlite.exec(`ALTER TABLE user_settings ADD COLUMN sandbox_enabled INTEGER DEFAULT 1`)
+} catch {}
 
 export const db = sqlite
 

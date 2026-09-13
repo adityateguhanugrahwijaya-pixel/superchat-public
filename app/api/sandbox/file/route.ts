@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/session'
-import { resolveSandboxPath, isSandboxEnabled } from '@/lib/sandbox'
+import { resolveSandboxPath, isUserSandboxEnabled } from '@/lib/sandbox'
 import fs from 'node:fs'
 import path from 'node:path'
+import * as XLSX from 'xlsx'
 
 function getMimeType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase()
@@ -40,14 +41,14 @@ function getMimeType(filePath: string): string {
 
 export async function GET(request: NextRequest) {
   try {
-    if (!isSandboxEnabled()) {
+    const user = await requireUser()
+    if (!isUserSandboxEnabled(user.id)) {
       return NextResponse.json(
-        { error: 'Sandbox file serving is disabled by server administrator.' },
+        { error: 'Sandbox file serving is disabled for your account or by server administrator.' },
         { status: 403 }
       )
     }
 
-    const user = await requireUser()
     const url = new URL(request.url)
     const chatId = url.searchParams.get('chatId')
     const filePath = url.searchParams.get('path')
@@ -73,17 +74,43 @@ export async function GET(request: NextRequest) {
     const ext = path.extname(fullPath).toLowerCase()
     const mimeType = getMimeType(fullPath)
 
-    // If parse requested for text/csv, return JSON preview
+    // If parse requested, ALWAYS return a valid JSON response
     if (isParse) {
-      if (ext === '.csv' || ext === '.txt' || ext === '.json' || ext === '.js' || ext === '.py' || ext === '.md' || ext === '.html') {
-        const text = fs.readFileSync(fullPath, 'utf-8')
+      if (ext === '.xlsx' || ext === '.xls') {
+        let csvText = ''
+        try {
+          const fileBuffer = fs.readFileSync(fullPath)
+          const workbook = XLSX.read(fileBuffer, { type: 'buffer' })
+          const firstSheetName = workbook.SheetNames[0]
+          if (firstSheetName && workbook.Sheets[firstSheetName]) {
+            csvText = XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheetName])
+          }
+        } catch (err: any) {
+          csvText = `Error parsing Excel spreadsheet: ${err?.message || 'Invalid format'}`
+        }
         return NextResponse.json({
           filename,
           ext,
           size: stat.size,
-          content: text,
+          content: csvText,
+          isExcel: true,
         })
       }
+
+      let text = ''
+      try {
+        text = fs.readFileSync(fullPath, 'utf-8')
+      } catch {
+        text = ''
+      }
+      const isBinaryPdf = ext === '.pdf' && text.startsWith('%PDF-')
+      return NextResponse.json({
+        filename,
+        ext,
+        size: stat.size,
+        content: isBinaryPdf ? '[Binary PDF Document]' : text,
+        isBinaryPdf,
+      })
     }
 
     const fileBuffer = fs.readFileSync(fullPath)

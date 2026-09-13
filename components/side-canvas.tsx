@@ -1,6 +1,9 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   X,
   Download,
@@ -12,7 +15,20 @@ import {
   Image as ImageIcon,
   Play,
   RefreshCw,
+  ExternalLink,
+  Eye,
+  Globe,
 } from 'lucide-react'
+
+const PdfViewerClient = dynamic(() => import('./PdfViewerClient'), {
+  ssr: false,
+  loading: () => (
+    <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>
+      <RefreshCw size={20} className="spin" style={{ margin: '0 auto 10px', display: 'block' }} />
+      Initializing PDF Viewer…
+    </div>
+  ),
+})
 
 export type CanvasFile = {
   path: string
@@ -33,8 +49,9 @@ export function SideCanvas({ chatId, open, files, activePath, onClose, onSelectF
   const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<boolean>(false)
-  const [activeTabMode, setActiveTabMode] = useState<'code' | 'preview'>('code')
+  const [activeTabMode, setActiveTabMode] = useState<'code' | 'preview'>('preview')
   const [tableFilter, setTableFilter] = useState<string>('')
+  const [isBinaryPdf, setIsBinaryPdf] = useState<boolean>(true)
 
   const activeFile = files.find((f) => f.path === activePath) || files[files.length - 1]
   const currentPath = activeFile?.path || ''
@@ -43,30 +60,47 @@ export function SideCanvas({ chatId, open, files, activePath, onClose, onSelectF
   const isPdf = ext === 'pdf'
   const isExcel = ext === 'xlsx' || ext === 'xls' || ext === 'csv'
   const isImage = ['png', 'jpg', 'jpeg', 'svg', 'webp'].includes(ext)
-  const isHtml = ext === 'html' || ext === 'htm' || ext === 'svg'
+  const isHtml = ext === 'html' || ext === 'htm'
+  const isMarkdown = ext === 'md' || ext === 'markdown'
 
   const fileUrl = currentPath
     ? `/api/sandbox/file?chatId=${encodeURIComponent(chatId)}&path=${encodeURIComponent(currentPath)}`
     : ''
 
+  // Set default view mode based on file type
   useEffect(() => {
-    if (!open || !currentPath || isPdf || isImage) return
+    if (isHtml || isMarkdown || isPdf || isImage || isExcel) {
+      setActiveTabMode('preview')
+    } else {
+      setActiveTabMode('code')
+    }
+  }, [currentPath])
+
+  useEffect(() => {
+    if (!open || !currentPath || isImage) return
 
     setLoading(true)
     setError(null)
     fetch(`${fileUrl}&parse=1`)
       .then((res) => {
         if (!res.ok) throw new Error(`Failed to load file (${res.status})`)
+        const contentType = res.headers.get('content-type') || ''
+        if (!contentType.includes('application/json')) {
+          throw new Error('Server returned non-JSON file content')
+        }
         return res.json()
       })
       .then((data) => {
         setContent(data.content || '')
+        if (isPdf) {
+          setIsBinaryPdf(data.isBinaryPdf !== false)
+        }
       })
       .catch((err) => {
         setError(err.message || 'Error loading file content')
       })
       .finally(() => setLoading(false))
-  }, [open, currentPath, chatId])
+  }, [open, currentPath, chatId, fileUrl, isPdf, isImage])
 
   if (!open) return null
 
@@ -139,13 +173,13 @@ export function SideCanvas({ chatId, open, files, activePath, onClose, onSelectF
   return (
     <aside
       style={{
-        width: 'min(550px, 45vw)',
+        width: 'min(620px, 50vw)',
         height: '100vh',
         display: 'flex',
         flexDirection: 'column',
         background: 'var(--white)',
         borderLeft: '1px solid var(--border)',
-        boxShadow: '-4px 0 20px #0000000d',
+        boxShadow: '-4px 0 24px #00000012',
         zIndex: 30,
       }}
     >
@@ -154,7 +188,7 @@ export function SideCanvas({ chatId, open, files, activePath, onClose, onSelectF
         style={{
           display: 'flex',
           alignItems: 'center',
-          justify: 'space-between',
+          justifyContent: 'space-between',
           padding: '14px 18px',
           borderBottom: '1px solid var(--border)',
           background: 'var(--sidebar)',
@@ -167,6 +201,8 @@ export function SideCanvas({ chatId, open, files, activePath, onClose, onSelectF
             <FileSpreadsheet size={18} color="#16a34a" />
           ) : isImage ? (
             <ImageIcon size={18} color="#2563eb" />
+          ) : isHtml ? (
+            <Globe size={18} color="var(--primary)" />
           ) : (
             <FileCode size={18} color="var(--primary)" />
           )}
@@ -176,42 +212,45 @@ export function SideCanvas({ chatId, open, files, activePath, onClose, onSelectF
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {isHtml && (
+          {/* Mode Switcher for Text/HTML/MD/PDF/Code Files */}
+          {!isImage && (
             <div style={{ display: 'flex', background: 'var(--background)', borderRadius: 6, padding: 2 }}>
-              <button
-                type="button"
-                onClick={() => setActiveTabMode('code')}
-                style={{
-                  border: 0,
-                  padding: '4px 8px',
-                  borderRadius: 4,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  background: activeTabMode === 'code' ? 'var(--white)' : 'transparent',
-                  cursor: 'pointer',
-                }}
-              >
-                Code
-              </button>
               <button
                 type="button"
                 onClick={() => setActiveTabMode('preview')}
                 style={{
                   border: 0,
-                  padding: '4px 8px',
+                  padding: '4px 10px',
                   borderRadius: 4,
                   fontSize: 11,
                   fontWeight: 600,
                   background: activeTabMode === 'preview' ? 'var(--white)' : 'transparent',
+                  color: activeTabMode === 'preview' ? 'var(--primary)' : 'var(--muted-foreground)',
                   cursor: 'pointer',
                 }}
               >
-                Live
+                Live View
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTabMode('code')}
+                style={{
+                  border: 0,
+                  padding: '4px 10px',
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  background: activeTabMode === 'code' ? 'var(--white)' : 'transparent',
+                  color: activeTabMode === 'code' ? 'var(--primary)' : 'var(--muted-foreground)',
+                  cursor: 'pointer',
+                }}
+              >
+                Code
               </button>
             </div>
           )}
 
-          {content && !isPdf && !isImage && (
+          {content && !isImage && (
             <button
               type="button"
               onClick={handleCopy}
@@ -220,6 +259,18 @@ export function SideCanvas({ chatId, open, files, activePath, onClose, onSelectF
             >
               {copied ? <Check size={16} color="#16a34a" /> : <Copy size={16} />}
             </button>
+          )}
+
+          {fileUrl && (
+            <a
+              href={fileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open Live Web View in New Tab"
+              style={{ border: 0, background: 'transparent', padding: 6, cursor: 'pointer', color: 'var(--muted-foreground)' }}
+            >
+              <ExternalLink size={16} />
+            </a>
           )}
 
           {fileUrl && (
@@ -279,13 +330,31 @@ export function SideCanvas({ chatId, open, files, activePath, onClose, onSelectF
           </div>
         ) : error ? (
           <div style={{ padding: 20, color: '#dc2626', fontSize: 13 }}>{error}</div>
-        ) : isPdf ? (
-          /* PDF Viewer Embed */
-          <iframe
-            src={`${fileUrl}#toolbar=1`}
-            style={{ width: '100%', height: '100%', border: 0 }}
-            title={activeFile?.title || 'PDF Viewer'}
+        ) : isPdf && activeTabMode === 'preview' ? (
+          /* PDF Live View via PdfViewerClient */
+          <PdfViewerClient
+            key={fileUrl}
+            fileUrl={fileUrl}
+            title={activeFile?.title}
+            fallbackContent={content}
           />
+        ) : isPdf && activeTabMode === 'code' ? (
+          <div>
+            <pre
+              style={{
+                margin: 0,
+                padding: 16,
+                fontSize: 13,
+                fontFamily: 'monospace',
+                lineHeight: 1.6,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+                color: 'var(--foreground)',
+              }}
+            >
+              {content}
+            </pre>
+          </div>
         ) : isImage ? (
           /* Image Viewer */
           <div style={{ padding: 20, display: 'grid', placeItems: 'center', height: '100%' }}>
@@ -295,8 +364,18 @@ export function SideCanvas({ chatId, open, files, activePath, onClose, onSelectF
           /* Excel / CSV Table Viewer */
           renderTable()
         ) : isHtml && activeTabMode === 'preview' ? (
-          /* HTML Live Render Preview */
-          <iframe srcDoc={content} style={{ width: '100%', height: '100%', border: 0, background: '#fff' }} title="Live Preview" />
+          /* Live Web View inside iframe */
+          <iframe
+            src={fileUrl}
+            key={fileUrl}
+            style={{ width: '100%', height: '100%', border: 0, background: '#ffffff' }}
+            title={activeFile?.title || 'Live Web View'}
+          />
+        ) : isMarkdown && activeTabMode === 'preview' ? (
+          /* Markdown Rendered Web Preview */
+          <div style={{ padding: '20px 24px', color: 'var(--foreground)', fontSize: 14, lineHeight: 1.7, background: 'var(--white)', minHeight: '100%' }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          </div>
         ) : (
           /* Code / Text Viewer */
           <pre

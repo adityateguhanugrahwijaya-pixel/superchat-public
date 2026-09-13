@@ -2,18 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/session'
 import { assessToolSafety } from '@/lib/sandbox/safety'
 import { executeSandboxTool } from '@/lib/sandbox/executor'
-import { isSandboxEnabled } from '@/lib/sandbox'
+import { isUserSandboxEnabled } from '@/lib/sandbox'
 
 export async function POST(request: NextRequest) {
   try {
-    if (!isSandboxEnabled()) {
+    const user = await requireUser()
+
+    if (!isUserSandboxEnabled(user.id)) {
       return NextResponse.json(
-        { error: 'Isolated Sandbox system is disabled by server administrator.' },
+        { error: 'Isolated Sandbox system is disabled for your account or by server administrator.' },
         { status: 403 }
       )
     }
 
-    const user = await requireUser()
     const body = await request.json().catch(() => ({}))
 
     const { chatId, toolName, params, approved } = body
@@ -24,7 +25,15 @@ export async function POST(request: NextRequest) {
 
     const safety = assessToolSafety(toolName, params || {})
 
-    // If command is high risk and not approved by user yet, require approval
+    // Strictly block forbidden commands like sudo / privilege elevation
+    if (safety.blocked) {
+      return NextResponse.json(
+        { error: safety.reason || 'Security Violation: Elevating privileges with sudo or root commands is strictly forbidden.' },
+        { status: 403 }
+      )
+    }
+
+    // If file removal or high risk action and not approved by user yet, require 1-min user confirmation
     if (safety.requiresApproval && !approved) {
       return NextResponse.json({
         requiresApproval: true,
@@ -32,6 +41,7 @@ export async function POST(request: NextRequest) {
         reason: safety.reason,
         toolName,
         params,
+        timeoutSeconds: 60,
       })
     }
 

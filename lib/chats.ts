@@ -6,6 +6,7 @@ export type MessageItem = {
   role: 'user' | 'assistant' | 'system'
   content: string
   createdAt?: string
+  toolCalls?: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>
 }
 
 export type ChatData = {
@@ -17,6 +18,7 @@ export type ChatData = {
   createdAt: string
   updatedAt: string
   messages: MessageItem[]
+  isAgentRunning?: boolean
 }
 
 export function getUserChatDir(userEmail: string): string {
@@ -45,6 +47,7 @@ export function listUserChats(userEmail: string) {
     model: string
     createdAt: string
     updatedAt: string
+    isAgentRunning?: boolean
   }> = []
 
   for (const file of files) {
@@ -59,6 +62,7 @@ export function listUserChats(userEmail: string) {
           model: data.model || 'deepseek/deepseek-chat',
           createdAt: data.createdAt || new Date().toISOString(),
           updatedAt: data.updatedAt || new Date().toISOString(),
+          isAgentRunning: Boolean(data.isAgentRunning),
         })
       }
     } catch {
@@ -125,4 +129,35 @@ export function deleteChatFile(userEmail: string, chatId: string): boolean {
     return true
   }
   return false
+}
+
+export function deleteAllUserChats(userEmail: string): number {
+  const dir = getUserChatDir(userEmail)
+  if (!fs.existsSync(dir)) return 0
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
+  let count = 0
+  for (const file of files) {
+    try {
+      fs.unlinkSync(path.join(dir, file))
+      count++
+    } catch {}
+  }
+  return count
+}
+
+export function exportUserChats(userEmail: string): ChatData[] {
+  const dir = getUserChatDir(userEmail)
+  if (!fs.existsSync(dir)) return []
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
+  const chats: ChatData[] = []
+  for (const file of files) {
+    try {
+      const content = fs.readFileSync(path.join(dir, file), 'utf-8')
+      const data = JSON.parse(content) as ChatData
+      if (data && data.id) {
+        chats.push(data)
+      }
+    } catch {}
+  }
+  return chats.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }

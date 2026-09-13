@@ -49,13 +49,16 @@ export function getFileIcon(filePath: string) {
 export function FileCard({ chatId, path, title, onView }: FileCardProps) {
   const fileName = title || path.split('/').pop() || path
   const downloadUrl = `/api/sandbox/file?chatId=${encodeURIComponent(chatId)}&path=${encodeURIComponent(path)}&download=1`
+  const ext = (path.split('.').pop() || '').toLowerCase()
+  const isWebFile = ['html', 'htm', 'svg', 'md', 'pdf', 'png', 'jpg', 'jpeg', 'csv'].includes(ext)
 
   return (
     <div
+      onClick={() => onView && onView(path, fileName)}
       style={{
         display: 'flex',
         alignItems: 'center',
-        justify: 'space-between',
+        justifyContent: 'space-between',
         gap: 12,
         padding: '12px 14px',
         margin: '10px 0',
@@ -63,6 +66,8 @@ export function FileCard({ chatId, path, title, onView }: FileCardProps) {
         border: '1px solid var(--border)',
         background: 'var(--white)',
         boxShadow: '0 2px 6px #00000008',
+        cursor: onView ? 'pointer' : 'default',
+        transition: 'all 0.15s ease',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
@@ -81,7 +86,10 @@ export function FileCard({ chatId, path, title, onView }: FileCardProps) {
         {onView && (
           <button
             type="button"
-            onClick={() => onView(path, fileName)}
+            onClick={(e) => {
+              e.stopPropagation()
+              onView(path, fileName)
+            }}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -96,12 +104,13 @@ export function FileCard({ chatId, path, title, onView }: FileCardProps) {
               cursor: 'pointer',
             }}
           >
-            <Eye size={13} /> View
+            <Eye size={13} /> {isWebFile ? 'Live View' : 'View Code'}
           </button>
         )}
         <a
           href={downloadUrl}
           download
+          onClick={(e) => e.stopPropagation()}
           style={{
             display: 'flex',
             alignItems: 'center',

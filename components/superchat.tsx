@@ -8,9 +8,12 @@ import { SideCanvas, CanvasFile } from './side-canvas'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
+  AlertCircle,
   Bot,
   Check,
+  CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   ExternalLink,
@@ -25,16 +28,17 @@ import {
   Send,
   Settings2,
   Sparkles,
+  Terminal,
   Trash2,
   X,
   BookOpen
 } from 'lucide-react'
 
-type Chat = { id: string; title: string; systemPrompt: string; model: string; updatedAt?: string }
+type Chat = { id: string; title: string; systemPrompt: string; model: string; updatedAt?: string; isAgentRunning?: boolean }
 type Message = { id?: string; role: 'user' | 'assistant'; content: string }
 type Usage = {
   used: string | number
-  dailyLimit: string | number
+  dailyLimit: string | number | null
   plan: string
   routerUrl?: string
   isCustom?: boolean
@@ -102,7 +106,129 @@ function parseThinkingAndContent(rawText: string) {
   return { thinking: null, content: rawText }
 }
 
+function parseToolCallJson(rawStr: string): { tool?: string; params?: Record<string, any> } | null {
+  const trimmed = rawStr.trim()
+  if (!trimmed) return null
+
+  try {
+    const data = JSON.parse(trimmed)
+    if (data && typeof data === 'object') {
+      const tool = String(data.tool || data.name || data.action || '').trim()
+      const params = data.params || data.arguments || data.parameters || data.input || {}
+      return { tool, params }
+    }
+  } catch {}
+
+  try {
+    let sanitized = ''
+    let inString = false
+    let isEscaped = false
+
+    for (let i = 0; i < trimmed.length; i++) {
+      const char = trimmed[i]
+      if (char === '"' && !isEscaped) {
+        inString = !inString
+        sanitized += char
+        isEscaped = false
+        continue
+      }
+      if (inString) {
+        if (char === '\n') sanitized += '\\n'
+        else if (char === '\r') sanitized += '\\r'
+        else if (char === '\t') sanitized += '\\t'
+        else sanitized += char
+      } else {
+        sanitized += char
+      }
+      if (char === '\\' && !isEscaped) isEscaped = true
+      else isEscaped = false
+    }
+
+    const data = JSON.parse(sanitized)
+    if (data && typeof data === 'object') {
+      const tool = String(data.tool || data.name || data.action || '').trim()
+      const params = data.params || data.arguments || data.parameters || data.input || {}
+      return { tool, params }
+    }
+  } catch {}
+
+  return null
+}
+
+function parseToolCallsAndCleanContent(rawText: string) {
+  const toolCalls: Array<{
+    toolName: string
+    status: 'running' | 'success' | 'failed'
+    output?: string
+  }> = []
+
+  if (!rawText) return { cleanText: '', toolCalls: [] }
+
+  // 1. Match closed OR unclosed tool call blocks (e.g. ```tool_call ... ``` or unclosed ```tool_call ... at EOF)
+  const toolCallBlockRegex = /(?:```(?:tool_call|toolcall|tool|json)?\s*([\s\S]*?)(?:```|$)|<tool_call>\s*([\s\S]*?)(?:<\/tool_call>|$))/gi
+  let match
+  while ((match = toolCallBlockRegex.exec(rawText)) !== null) {
+    const jsonStr = (match[1] || match[2] || '').trim()
+    if (!jsonStr) continue
+
+    let name = ''
+    try {
+      const data = parseToolCallJson(jsonStr)
+      if (data && data.tool) {
+        name = data.tool
+      }
+    } catch {}
+
+    if (!name) {
+      const nameMatch = jsonStr.match(/"(?:tool|name|action)"\s*:\s*"([^"]+)"/i)
+      if (nameMatch) name = nameMatch[1].trim()
+    }
+
+    if (name && !toolCalls.some((t) => t.toolName === name)) {
+      toolCalls.push({ toolName: name, status: 'running' })
+    }
+  }
+
+  // 2. Match > 🛠️ **Executing Tool:** `tool_name`...
+  const execRegex = />?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`([^`\r\n]+)`(?:\.\.\.)?/gi
+  while ((match = execRegex.exec(rawText)) !== null) {
+    const name = match[1].trim()
+    const existing = toolCalls.find((t) => t.toolName === name)
+    if (!existing) {
+      toolCalls.push({ toolName: name, status: 'running' })
+    }
+  }
+
+  // 3. Match tool outputs (closed or unclosed, code block or plain text or notices)
+  const outputHeaderRegex = />?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```([\s\S]*?)```|([^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*))?/gi
+  let outIdx = 0
+  let outMatch
+  while ((outMatch = outputHeaderRegex.exec(rawText)) !== null) {
+    const isError = outMatch[0].includes('Error') || outMatch[0].includes('❌')
+    const text = (outMatch[1] || outMatch[2] || '').trim()
+    if (toolCalls[outIdx]) {
+      toolCalls[outIdx].status = isError ? 'failed' : 'success'
+      if (text) toolCalls[outIdx].output = text
+      outIdx++
+    }
+  }
+
+  // 4. Thoroughly clean raw tool_call JSON, headers, output blocks, and notices from cleanText
+  let cleanText = rawText
+    .replace(/(?:```(?:tool_call|toolcall|tool)\s*[\s\S]*?(?:```|$)|<tool_call>\s*[\s\S]*?(?:<\/tool_call>|$))/gi, '')
+    .replace(/>?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`?[^`\r\n]+`?\s*(?:\.\.\.)?[\r\n]*/gi, '')
+    .replace(/>?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*)?[\r\n]*/gi, '')
+    .replace(/>?\s*⚠️\s*\*\*Notice:\*\*\s*[^\r\n]*(?:[\r\n]+[^\r\n]+)*/gi, '')
+    .replace(/>?\s*(?:✅|❌)?\s*(?:Output|Execution Error|Command executed successfully):\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+)?[\r\n]*/gi, '')
+    .replace(/\[System Tool Execution Feedback\][\s\S]*?(?=\n\n|$)/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  return { cleanText, toolCalls }
+}
+
 function CodeBlock({ inline, className, children, node, ...props }: any) {
+  const [copied, setCopied] = useState(false)
   const codeString = String(children).replace(/\n$/, '')
   const isInline = inline || (!className && !codeString.includes('\n'))
 
@@ -112,7 +238,6 @@ function CodeBlock({ inline, className, children, node, ...props }: any) {
 
   const match = /language-(\w+)/.exec(className || '')
   const lang = match ? match[1] : 'code'
-  const [copied, setCopied] = useState(false)
 
   const handleCopy = () => {
     navigator.clipboard.writeText(codeString)
@@ -136,6 +261,85 @@ function CodeBlock({ inline, className, children, node, ...props }: any) {
   )
 }
 
+function ToolBadgeCard({
+  tool,
+  defaultExpanded = false,
+}: {
+  tool: { toolName: string; status: 'running' | 'success' | 'failed'; output?: string }
+  defaultExpanded?: boolean
+}) {
+  const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded)
+  const [copied, setCopied] = useState<boolean>(false)
+
+  useEffect(() => {
+    setIsExpanded(defaultExpanded)
+  }, [defaultExpanded])
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!tool.output) return
+    navigator.clipboard.writeText(tool.output)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <div className="tool-badge-card">
+      <div className="tool-badge-header">
+        <div className="tool-badge-info">
+          <Terminal size={14} className="tool-badge-icon" />
+          <span className="tool-badge-label">Call Tool</span>
+          <span className="tool-badge-separator">---</span>
+          <strong className="tool-badge-name">{tool.toolName}</strong>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className={`tool-status-tag ${tool.status}`}>
+            {tool.status === 'running' && <span className="tool-pulse-dot" />}
+            {tool.status === 'success' && <CheckCircle2 size={12} />}
+            {tool.status === 'failed' && <AlertCircle size={12} />}
+            <span>{tool.status === 'running' ? 'Running' : tool.status === 'success' ? 'Completed' : 'Failed'}</span>
+          </div>
+
+          {tool.output && (
+            <button
+              type="button"
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="tool-dropdown-btn"
+              title={isExpanded ? 'Hide execution output' : 'View execution output'}
+            >
+              <span>{isExpanded ? 'Hide Output' : 'View Output'}</span>
+              <ChevronDown size={13} className={`tool-dropdown-arrow ${isExpanded ? 'expanded' : ''}`} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {tool.output && isExpanded && (
+        <div className="tool-output-terminal">
+          <div className="terminal-header">
+            <div className="terminal-dots">
+              <span className="dot dot-red" />
+              <span className="dot dot-yellow" />
+              <span className="dot dot-green" />
+            </div>
+            <span className="terminal-title">{tool.toolName} console output</span>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="terminal-copy-btn"
+              title="Copy output content"
+            >
+              {copied ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
+              <span>{copied ? 'Copied' : 'Copy'}</span>
+            </button>
+          </div>
+          <pre className="terminal-body">{tool.output}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   const [chats, setChats] = useState<Chat[]>([])
@@ -145,6 +349,11 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   const [selectedModel, setSelectedModel] = useState(fallbackModels[0].id)
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const streamingRef = useRef(false)
+  useEffect(() => {
+    streamingRef.current = streaming
+  }, [streaming])
+  const [isAgentRunning, setIsAgentRunning] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [historySearch, setHistorySearch] = useState('')
@@ -157,6 +366,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   const [topP, setTopP] = useState(1)
   const [maxTokens, setMaxTokens] = useState(4096)
   const [copied, setCopied] = useState<string | null>(null)
+  const [showToolOutputs, setShowToolOutputs] = useState<boolean>(false)
   const [usage, setUsage] = useState<Usage>({ used: 0, dailyLimit: null, plan: 'Standard Router' })
 
   // Branching / Editing User Message State
@@ -260,6 +470,13 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     if (initialChatId) setActiveId(initialChatId)
   }, [initialChatId])
 
+  const handleStopAgent = async () => {
+    if (!activeId) return
+    await fetch(`/api/chat?chatId=${activeId}`, { method: 'DELETE' }).catch(() => {})
+    setIsAgentRunning(false)
+    setStreaming(false)
+  }
+
   useEffect(() => {
     if (skipFetchChatIdRef.current === activeId) {
       skipFetchChatIdRef.current = null
@@ -268,11 +485,54 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     if (activeId) {
       fetch(`/api/chats/${activeId}`)
         .then((r) => r.json())
-        .then(setMessages)
-        .catch(() => setMessages([]))
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setMessages(data)
+            setIsAgentRunning(false)
+          } else if (data && Array.isArray(data.messages)) {
+            setMessages(data.messages)
+            setIsAgentRunning(Boolean(data.isAgentRunning))
+          } else {
+            setMessages([])
+            setIsAgentRunning(false)
+          }
+        })
+        .catch(() => {
+          setMessages([])
+          setIsAgentRunning(false)
+        })
     } else {
       setMessages([])
+      setIsAgentRunning(false)
     }
+  }, [activeId])
+
+  // Background agent polling effect
+  useEffect(() => {
+    if (!activeId) return
+
+    const interval = setInterval(() => {
+      // Do not overwrite client messages if user is actively streaming a live response
+      if (streamingRef.current) return
+
+      fetch(`/api/chats/${activeId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data && Array.isArray(data.messages)) {
+            const running = Boolean(data.isAgentRunning)
+            setIsAgentRunning(running)
+            setMessages(data.messages)
+          }
+        })
+        .catch(() => {})
+
+      fetch('/api/chats')
+        .then((r) => r.json())
+        .then(setChats)
+        .catch(() => {})
+    }, 1800)
+
+    return () => clearInterval(interval)
   }, [activeId])
 
   useEffect(() => {
@@ -608,6 +868,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                 <button onClick={() => selectChat(chat.id)}>
                   <MessageSquarePlus size={15} />
                   <span>{chat.title}</span>
+                  {chat.isAgentRunning && <span className="sidebar-agent-pulse" title="Agent executing in background" />}
                 </button>
                 <div className="history-actions">
                   <button onClick={() => renameChat(chat)} aria-label="Rename chat"><Pencil size={14} /></button>
@@ -759,11 +1020,33 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                 <input type="number" min="256" max="32768" step="256" value={maxTokens} onChange={(event) => setMaxTokens(Number(event.target.value) || 256)} />
               </label>
             </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)', cursor: 'pointer', userSelect: 'none' }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)' }}>Expand tool outputs by default</span>
+              <input
+                type="checkbox"
+                checked={showToolOutputs}
+                onChange={(e) => setShowToolOutputs(e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: 'var(--primary)', cursor: 'pointer' }}
+              />
+            </label>
           </div>
         )}
 
         <div className="conversation">
           <div className="conversation-inner">
+            {isAgentRunning && (
+              <div className="bg-agent-banner">
+                <div className="bg-agent-info">
+                  <span className="bg-agent-pulse-dot" />
+                  <Bot size={16} />
+                  <span>Agent is running background tools... (will continue even if tab is closed)</span>
+                </div>
+                <button className="bg-agent-stop-btn" onClick={handleStopAgent}>
+                  <X size={13} /> Stop Agent
+                </button>
+              </div>
+            )}
             {!activeId || messages.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-icon"><Bot size={25} /></div>
@@ -878,28 +1161,74 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                                   </div>
                                 )
                               })()}
-                              <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
-                                components={{ code: CodeBlock }}
-                              >
-                                {parsedContent || (thinking ? '' : 'Thinking…')}
-                              </ReactMarkdown>
                               {(() => {
-                                const fileTags: Array<{ path: string; title: string }> = []
-                                const regex = /<file\s+path=["']([^"']+)["'][^>]*>(.*?)<\/file>/gi
-                                let match
-                                while ((match = regex.exec(parsedContent)) !== null) {
-                                  fileTags.push({ path: match[1], title: match[2] || match[1] })
+                                const { cleanText: textAfterToolCleanup, toolCalls: parsedCalls } = parseToolCallsAndCleanContent(parsedContent || '')
+                                const existingCalls = (message as any).toolCalls || []
+                                const combinedToolCalls = [...existingCalls]
+                                for (const pc of parsedCalls) {
+                                  if (!combinedToolCalls.some((t: any) => t.toolName === pc.toolName)) {
+                                    combinedToolCalls.push(pc)
+                                  }
                                 }
-                                return fileTags.map((file, fIdx) => (
-                                  <FileCard
-                                    key={`${file.path}-${fIdx}`}
-                                    chatId={activeId || 'default'}
-                                    path={file.path}
-                                    title={file.title}
-                                    onView={(p, t) => openFileInCanvas(p, t)}
-                                  />
-                                ))
+
+                                const fileTags: Array<{ path: string; title: string }> = []
+                                const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi
+
+                                const isLastMessage = index === messages.length - 1
+                                const isBusy = isLastMessage && isAgentRunning
+                                let cleanContent = textAfterToolCleanup
+                                if (!cleanContent && !thinking && combinedToolCalls.length === 0) {
+                                  cleanContent = isBusy ? 'Executing sandbox tasks…' : ''
+                                }
+                                // Strip bare or malformed <file> tags without path
+                                cleanContent = cleanContent.replace(/<file(?:\s+path=["']\s*["'])?\s*>[\s\S]*?<\/file>|<file\s*\/?>/gi, '')
+                                let match
+                                while ((match = fileRegex.exec(textAfterToolCleanup)) !== null) {
+                                  const filePath = match[1] ? match[1].trim() : ''
+                                  if (!filePath) continue
+                                  let rawTitle = match[2] ? match[2].trim() : filePath
+                                  const wordCount = rawTitle.split(/\s+/).filter(Boolean).length
+                                  if (rawTitle.includes('\n') || wordCount > 5 || rawTitle.length > 60) {
+                                    rawTitle = filePath.split('/').pop() || filePath
+                                  }
+                                  fileTags.push({ path: filePath, title: rawTitle })
+                                }
+                                cleanContent = cleanContent.replace(fileRegex, '').trim()
+
+                                return (
+                                  <>
+                                    {combinedToolCalls.length > 0 && (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '8px 0 12px' }}>
+                                        {combinedToolCalls.map((tool: any, tIdx: number) => (
+                                          <ToolBadgeCard
+                                            key={`${tool.toolName}-${tIdx}`}
+                                            tool={tool}
+                                            defaultExpanded={showToolOutputs}
+                                          />
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {cleanContent && (
+                                      <ReactMarkdown
+                                        remarkPlugins={[remarkGfm]}
+                                        components={{ code: CodeBlock }}
+                                      >
+                                        {cleanContent}
+                                      </ReactMarkdown>
+                                    )}
+
+                                    {fileTags.map((file, fIdx) => (
+                                      <FileCard
+                                        key={`${file.path}-${fIdx}`}
+                                        chatId={activeId || 'default'}
+                                        path={file.path}
+                                        title={file.title}
+                                        onView={(p, t) => openFileInCanvas(p, t)}
+                                      />
+                                    ))}
+                                  </>
+                                )
                               })()}
                             </>
                           ) : (

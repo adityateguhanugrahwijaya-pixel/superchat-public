@@ -18,9 +18,11 @@ appconfig.json
 
 # Data & local stores
 chats/
+sandbox/
 local.db
 local.db-shm
 local.db-wal
+tsconfig.tsbuildinfo
 
 # Common ignores
 node_modules
