@@ -5,7 +5,12 @@ import { sqlite } from './db'
 
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex')
-  const derivedKey = crypto.scryptSync(password, salt, 64).toString('hex')
+  const derivedKey = crypto.scryptSync(password.normalize('NFKC'), salt, 64, {
+    N: 16384,
+    r: 16,
+    p: 1,
+    maxmem: 67108864,
+  }).toString('hex')
   return `${salt}:${derivedKey}`
 }
 
@@ -64,7 +69,7 @@ export function bootstrapAdminAccount() {
                  updated_at = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP 
                WHERE id = ?`
             )
-            .run(hashedPassword, existingUser.id, existingUser.id, adminEmail, adminEmail, existingAccount.id)
+            .run(hashedPassword, existingUser.id, existingUser.id, existingUser.id, existingUser.id, existingAccount.id)
         } else {
           const accountId = crypto.randomUUID()
           sqlite
@@ -72,7 +77,7 @@ export function bootstrapAdminAccount() {
               `INSERT INTO account (id, userId, user_id, providerId, provider_id, accountId, account_id, password, created_at, updated_at)
                VALUES (?, ?, ?, 'credential', 'credential', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
             )
-            .run(accountId, existingUser.id, existingUser.id, adminEmail, adminEmail, hashedPassword)
+            .run(accountId, existingUser.id, existingUser.id, existingUser.id, existingUser.id, hashedPassword)
         }
       }
       console.log(`[Admin Bootstrap] Verified & updated admin account: ${adminEmail} (role: admin)`)
@@ -95,7 +100,7 @@ export function bootstrapAdminAccount() {
           `INSERT INTO account (id, userId, user_id, providerId, provider_id, accountId, account_id, password, created_at, updated_at)
            VALUES (?, ?, ?, 'credential', 'credential', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
         )
-        .run(accountId, userId, userId, adminEmail, adminEmail, hashedPassword)
+        .run(accountId, userId, userId, userId, userId, hashedPassword)
 
       console.log(`[Admin Bootstrap] Created new admin account: ${adminEmail} (role: admin)`)
     }
