@@ -7,6 +7,7 @@ import { ApprovalCard } from './approval-card'
 import { SideCanvas, CanvasFile } from './side-canvas'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { authClient } from '@/lib/auth-client'
 import {
   AlertCircle,
   Bot,
@@ -19,6 +20,7 @@ import {
   ExternalLink,
   FileText,
   Globe,
+  LogOut,
   Mic,
   MessageSquarePlus,
   PanelLeft,
@@ -470,6 +472,20 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     if (initialChatId) setActiveId(initialChatId)
   }, [initialChatId])
 
+  const handleSignOut = async () => {
+    try {
+      await authClient.signOut({
+        fetchOptions: {
+          onSuccess: () => {
+            window.location.href = '/sign-in'
+          },
+        },
+      })
+    } catch {
+      window.location.href = '/sign-in'
+    }
+  }
+
   const handleStopAgent = async () => {
     if (!activeId) return
     await fetch(`/api/chat?chatId=${activeId}`, { method: 'DELETE' }).catch(() => {})
@@ -891,7 +907,17 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
             </div>
           </div>
 
-          <a href="/settings" className="footer-more" aria-label="Account settings"><Settings2 size={17} /></a>
+          <a href="/settings" className="footer-more" aria-label="Account settings" title="Settings"><Settings2 size={17} /></a>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="footer-more"
+            aria-label="Log Out"
+            title="Log Out of Account"
+            style={{ color: '#ef4444' }}
+          >
+            <LogOut size={17} />
+          </button>
         </div>
       </aside>
 

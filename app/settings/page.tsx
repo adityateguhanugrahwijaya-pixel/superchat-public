@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react'
 import { POPULAR_PROMPT_PRESETS } from '@/lib/presets'
+import { authClient } from '@/lib/auth-client'
 import {
   Activity,
   AlertCircle,
@@ -17,6 +18,7 @@ import {
   Globe,
   Key,
   Lock,
+  LogOut,
   RefreshCw,
   Shield,
   Sparkles,
@@ -150,6 +152,20 @@ export default function SettingsPage() {
       setUpdateMsg({ ok: true, message: '🚀 Update launched! Application is restarting...' })
     } finally {
       setInstallingUpdate(false)
+    }
+  }
+
+  async function handleSignOut() {
+    try {
+      await authClient.signOut({
+        fetchOptions: {
+          onSuccess: () => {
+            window.location.href = '/sign-in'
+          },
+        },
+      })
+    } catch {
+      window.location.href = '/sign-in'
     }
   }
 
@@ -904,6 +920,45 @@ export default function SettingsPage() {
                   )}
                 </div>
               </form>
+            </article>
+          </div>
+
+          {/* Session & Log Out Card */}
+          <div className="admin-grid" style={{ marginTop: 24 }}>
+            <article className="admin-wide">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, color: '#dc2626' }}>
+                <LogOut size={18} color="#dc2626" /> Session & Log Out
+              </h2>
+              <p style={{ margin: '4px 0 20px', fontSize: 13, color: 'var(--muted-foreground)' }}>
+                Sign out of your active session on this device.
+              </p>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 16, border: '1px solid #fee2e2', background: '#fef2f2', borderRadius: 12 }}>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: 14, color: '#991b1b' }}>Log out of SuperChat</h4>
+                  <p style={{ margin: '2px 0 0', fontSize: 13, color: '#b91c1c' }}>
+                    Revokes your session cookies and redirects to the sign-in screen.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="primary-button"
+                  style={{
+                    width: 'auto',
+                    padding: '9px 20px',
+                    background: '#dc2626',
+                    borderColor: '#b91c1c',
+                    color: '#ffffff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <LogOut size={16} /> Log Out
+                </button>
+              </div>
             </article>
           </div>
         </div>
