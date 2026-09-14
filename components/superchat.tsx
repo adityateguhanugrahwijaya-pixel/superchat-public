@@ -951,13 +951,19 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
             <select
               aria-label="Select model"
               value={activeChat?.model || selectedModel}
+              onFocus={() => {
+                fetch('/api/models')
+                  .then((r) => (r.ok ? r.json() : null))
+                  .then((data) => data && Array.isArray(data) && data.length && setModels(data))
+                  .catch(() => {})
+              }}
               onChange={(event) => updateChat({ model: event.target.value })}
             >
               {models.map((model) => (
                 <option key={model.id} value={model.id}>{model.name}</option>
               ))}
             </select>
-            <ChevronDown size={15} />
+            <ChevronDown size={15} style={{ pointerEvents: 'none' }} />
           </div>
 
           {messages.length > 0 && (
