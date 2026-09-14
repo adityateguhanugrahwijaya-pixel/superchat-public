@@ -9,7 +9,7 @@ export async function GET() {
   const globalSandboxEnabled = isSandboxEnabled()
   const row = db
     .prepare(
-      'SELECT api_mode as apiMode, custom_router_url as customRouterUrl, custom_api_key_encrypted as customApiKeyEncrypted, global_system_prompt as globalSystemPrompt, default_model as defaultModel, timezone, sandbox_enabled as sandboxEnabled FROM user_settings WHERE user_id = ?'
+      'SELECT api_mode as apiMode, custom_router_url as customRouterUrl, custom_api_key_encrypted as customApiKeyEncrypted, global_system_prompt as globalSystemPrompt, default_model as defaultModel, timezone, sandbox_enabled as sandboxEnabled, custom_models as customModels FROM user_settings WHERE user_id = ?'
     )
     .get(user.id) as
     | {
@@ -20,10 +20,20 @@ export async function GET() {
         defaultModel?: string
         timezone?: string
         sandboxEnabled?: number
+        customModels?: string
       }
     | undefined
 
   const userSandboxEnabled = row?.sandboxEnabled !== undefined ? row.sandboxEnabled !== 0 : true
+  let customModels: string[] = []
+  if (row?.customModels) {
+    try {
+      const parsed = JSON.parse(row.customModels)
+      if (Array.isArray(parsed)) {
+        customModels = parsed.map((m) => String(m).trim()).filter(Boolean)
+      }
+    } catch {}
+  }
 
   return NextResponse.json({
     apiMode: row?.apiMode || 'superchat',
@@ -34,6 +44,7 @@ export async function GET() {
     timezone: row?.timezone || 'UTC',
     globalSandboxEnabled,
     userSandboxEnabled,
+    customModels,
     userEmail: user.email,
     userName: user.name,
     userId: user.id,
@@ -51,10 +62,15 @@ export async function PUT(request: NextRequest) {
   const defaultModel = typeof body.defaultModel === 'string' ? body.defaultModel.trim() : null
   const timezone = typeof body.timezone === 'string' ? body.timezone.trim() : 'UTC'
   const userSandboxEnabled = body.userSandboxEnabled !== undefined ? (body.userSandboxEnabled ? 1 : 0) : 1
+  let customModelsJson: string | null = null
+  if (Array.isArray(body.customModels)) {
+    const cleaned = body.customModels.map((m: any) => String(m).trim()).filter(Boolean)
+    customModelsJson = JSON.stringify(cleaned)
+  }
 
   db.prepare(`
-    INSERT INTO user_settings (user_id, api_mode, custom_api_key_encrypted, custom_router_url, global_system_prompt, default_model, timezone, sandbox_enabled)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO user_settings (user_id, api_mode, custom_api_key_encrypted, custom_router_url, global_system_prompt, default_model, timezone, sandbox_enabled, custom_models)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       api_mode = excluded.api_mode,
       custom_api_key_encrypted = COALESCE(excluded.custom_api_key_encrypted, user_settings.custom_api_key_encrypted),
@@ -63,8 +79,9 @@ export async function PUT(request: NextRequest) {
       default_model = excluded.default_model,
       timezone = excluded.timezone,
       sandbox_enabled = excluded.sandbox_enabled,
+      custom_models = COALESCE(excluded.custom_models, user_settings.custom_models),
       updated_at = CURRENT_TIMESTAMP
-  `).run(user.id, mode, key, url, globalSystemPrompt, defaultModel, timezone, userSandboxEnabled)
+  `).run(user.id, mode, key, url, globalSystemPrompt, defaultModel, timezone, userSandboxEnabled, customModelsJson)
 
   return NextResponse.json({
     ok: true,
@@ -74,6 +91,7 @@ export async function PUT(request: NextRequest) {
     defaultModel,
     timezone,
     userSandboxEnabled: userSandboxEnabled === 1,
+    customModels: customModelsJson ? JSON.parse(customModelsJson) : [],
   })
 }
 

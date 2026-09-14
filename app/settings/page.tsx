@@ -65,6 +65,21 @@ export default function SettingsPage() {
   const [hasSavedKey, setHasSavedKey] = useState(false)
   const [globalSandboxEnabled, setGlobalSandboxEnabled] = useState(true)
   const [userSandboxEnabled, setUserSandboxEnabled] = useState(true)
+  const [customModels, setCustomModels] = useState<string[]>([])
+  const [newModelInput, setNewModelInput] = useState('')
+
+  function addCustomModel(modelName?: string) {
+    const nameToAdd = (modelName || newModelInput).trim()
+    if (!nameToAdd) return
+    if (!customModels.some((m) => m.toLowerCase() === nameToAdd.toLowerCase())) {
+      setCustomModels((prev) => [...prev, nameToAdd])
+    }
+    setNewModelInput('')
+  }
+
+  function removeCustomModel(modelName: string) {
+    setCustomModels((prev) => prev.filter((m) => m !== modelName))
+  }
 
   // Account Profile States
   const [userName, setUserName] = useState('')
@@ -249,6 +264,7 @@ export default function SettingsPage() {
         setGlobalPrompt(s.globalSystemPrompt || '')
         setGlobalSandboxEnabled(s.globalSandboxEnabled !== false)
         setUserSandboxEnabled(s.userSandboxEnabled !== false)
+        setCustomModels(Array.isArray(s.customModels) ? s.customModels : [])
         setUserName(s.userName || '')
         setNewUsername(s.userName || '')
         setUserEmail(s.userEmail || '')
@@ -273,6 +289,7 @@ export default function SettingsPage() {
           customApiKey: key || undefined,
           globalSystemPrompt: globalPrompt,
           userSandboxEnabled,
+          customModels,
         }),
       })
       if (res.ok) {
@@ -684,6 +701,135 @@ export default function SettingsPage() {
                   >
                     {testResult.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
                     {testResult.message}
+                  </div>
+                )}
+              </div>
+            </article>
+
+            {/* Custom Model Names Card */}
+            <article className="admin-wide" style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                  <Cpu size={18} color="var(--primary)" /> Custom Model Names
+                </h2>
+                <p style={{ margin: '4px 0 14px', fontSize: 13, color: 'var(--muted-foreground)' }}>
+                  Define custom model IDs available for your account (e.g. <code>gpt-4o-mini</code>, <code>claude-3-5-sonnet</code>, <code>mistral-large</code>). These custom models will automatically be merged into your chat model dropdown alongside provider API models.
+                </p>
+              </div>
+
+              {/* Input & Add Button */}
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={newModelInput}
+                  onChange={(e) => setNewModelInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      addCustomModel()
+                    }
+                  }}
+                  placeholder="Enter model ID (e.g. gpt-4o, deepseek-coder, claude-3-5-sonnet)"
+                  style={{
+                    flex: 1,
+                    padding: '10px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    fontSize: 14,
+                    outline: 'none',
+                    background: 'var(--white)',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => addCustomModel()}
+                  style={{
+                    padding: '10px 18px',
+                    border: 0,
+                    borderRadius: 8,
+                    background: 'var(--primary)',
+                    color: 'var(--white)',
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  + Add Model
+                </button>
+              </div>
+
+              {/* Popular Presets */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted-foreground)' }}>Quick Presets (Click to add):</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {['gpt-4o', 'gpt-4o-mini', 'claude-3-5-sonnet', 'claude-3-haiku', 'gemini-1.5-pro', 'gemini-1.5-flash', 'deepseek-coder', 'mistral-large', 'llama-3.3-70b'].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => addCustomModel(preset)}
+                      disabled={customModels.includes(preset)}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 14,
+                        border: '1px solid var(--border)',
+                        background: customModels.includes(preset) ? '#f1f1f5' : 'var(--white)',
+                        color: customModels.includes(preset) ? 'var(--muted-foreground)' : 'var(--foreground)',
+                        fontSize: 12,
+                        cursor: customModels.includes(preset) ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      + {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Active Custom Models Badges */}
+              <div style={{ marginTop: 8, padding: 14, background: '#fafafc', border: '1px solid var(--border)', borderRadius: 12 }}>
+                <strong style={{ display: 'block', fontSize: 13, marginBottom: 8 }}>Your Active Custom Models ({customModels.length}):</strong>
+                {customModels.length === 0 ? (
+                  <span style={{ fontSize: 13, color: 'var(--muted-foreground)', fontStyle: 'italic' }}>
+                    No custom model names added yet. Type a model name above to add it to your dropdown selector.
+                  </span>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {customModels.map((modelName) => (
+                      <span
+                        key={modelName}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '6px 12px',
+                          borderRadius: 20,
+                          background: 'var(--primary-soft)',
+                          color: 'var(--primary)',
+                          fontSize: 13,
+                          fontWeight: 600,
+                          border: '1px solid var(--border)',
+                        }}
+                      >
+                        {modelName}
+                        <button
+                          type="button"
+                          onClick={() => removeCustomModel(modelName)}
+                          style={{
+                            border: 0,
+                            background: 'transparent',
+                            color: '#dc2626',
+                            cursor: 'pointer',
+                            fontSize: 14,
+                            lineHeight: 1,
+                            padding: '0 2px',
+                            fontWeight: 700,
+                          }}
+                          title="Remove model"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>

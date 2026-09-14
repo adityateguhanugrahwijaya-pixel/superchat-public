@@ -127,6 +127,9 @@ try {
 try {
   sqlite.exec(`ALTER TABLE user_settings ADD COLUMN sandbox_enabled INTEGER DEFAULT 1`)
 } catch {}
+try {
+  sqlite.exec(`ALTER TABLE user_settings ADD COLUMN custom_models TEXT DEFAULT '[]'`)
+} catch {}
 
 // Ensure account and session table columns (both snake_case and camelCase) stay 100% in sync
 try {
