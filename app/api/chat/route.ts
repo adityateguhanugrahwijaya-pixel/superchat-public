@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
     capabilityPrompts.push(
       `[Web Search Status: ACTIVE]\n` +
         `Live Web Search Grounding is ENABLED. You have access to real-time internet search context.\n` +
-        `When referencing web search information, cite sources clearly using markdown links [Source Title](URL) so the user can easily view and verify web sources.`
+        `CRITICAL CITATION MANDATE: You MUST cite your references using markdown links like [Source Title](URL) directly in your response text. Always include clickable markdown links [Title](URL) for every source you use.`
     )
     if (searchGroundingPrompt) {
       capabilityPrompts.push(searchGroundingPrompt)
@@ -181,6 +181,8 @@ export async function POST(request: NextRequest) {
   }
   chat.messages.push(userMsg)
 
+  const sandboxActive = isUserSandboxEnabled(user.id)
+
   // Add initial assistant message placeholder
   const assistantMsgId = crypto.randomUUID()
   const assistantMsg: MessageItem = {
@@ -190,13 +192,15 @@ export async function POST(request: NextRequest) {
     createdAt: new Date().toISOString(),
   }
   chat.messages.push(assistantMsg)
-  chat.isAgentRunning = true
+  chat.isAgentRunning = sandboxActive
   chat.updatedAt = new Date().toISOString()
   saveChat(user.email, chat)
 
   // Set up job tracker
   const currentJob = { cancel: false, startedAt: Date.now() }
-  activeAgentJobs.set(chatId, currentJob)
+  if (sandboxActive) {
+    activeAgentJobs.set(chatId, currentJob)
+  }
 
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
@@ -216,8 +220,7 @@ export async function POST(request: NextRequest) {
 
       // Run background execution loop asynchronously
       let turn = 0
-      const maxTurns = 12
-      const sandboxActive = isUserSandboxEnabled(user.id)
+      const maxTurns = sandboxActive ? 12 : 1
       let fullAssistantText = ''
 
       try {
