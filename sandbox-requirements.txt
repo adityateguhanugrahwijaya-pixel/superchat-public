@@ -1,0 +1,23 @@
+# Python packages installed into .sandbox-venv for the SuperChat sandbox.
+# Edit this list, then run:  node scripts/setup-sandbox.js
+# (start.sh / start.bat do this automatically on launch.)
+
+# Data
+numpy
+pandas
+openpyxl
+xlsxwriter
+
+# Charts and images
+matplotlib
+pillow
+
+# Documents
+python-docx
+python-pptx
+reportlab
+pypdf
+
+# Web / misc
+requests
+beautifulsoup4
