@@ -25,8 +25,8 @@ echo Installing project dependencies with npm install...
 call npm install
 
 :CHECK_CONFIG
-if exist ".env.local" goto BUILD_APP
-if exist "appconfig.json" goto BUILD_APP
+if exist ".env.local" goto SETUP_SANDBOX
+if exist "appconfig.json" goto SETUP_SANDBOX
 
 echo.
 echo =================================================================
@@ -86,7 +86,14 @@ for /f "tokens=*" %%a in ('node -e "console.log(require('crypto').randomBytes(32
     echo BETTER_AUTH_URL=http://localhost:3000
     echo SQLITE_PATH=local.db
 ) > .env.local
-echo [OK] Created .env.local (API Key & Auth Secret configuration).
+echo [OK] Created .env.local (API Key ^& Auth Secret configuration).
+
+:SETUP_SANDBOX
+:: Sandbox runtime: checks Python, creates the .sandbox-venv environment and
+:: installs packages. Does nothing if the sandbox is disabled. Never blocks startup.
+if not exist "scripts\setup-sandbox.js" goto BUILD_APP
+call node scripts\setup-sandbox.js
+if errorlevel 1 echo [!] Sandbox setup did not finish. SuperChat will still start, but Python tools may not work.
 
 :BUILD_APP
 if exist ".next\BUILD_ID" goto LAUNCH_APP
