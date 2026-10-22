@@ -31,6 +31,19 @@ function getPythonBin(): string {
   return process.platform === 'win32' ? 'python' : 'python3'
 }
 
+/**
+ * Environment passed to scripts/commands the agent runs. Strips secrets
+ * (admin password, API keys, auth secrets) so an agent-written script can't print them.
+ */
+function getChildEnv(): NodeJS.ProcessEnv {
+  const blocked = /(SECRET|PASSWORD|PASSWD|API_?KEY|TOKEN|ADMIN_|BETTER_AUTH|PRIVATE_KEY|CREDENTIAL)/i
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!blocked.test(key)) env[key] = value
+  }
+  return env
+}
+
 // ---------------------------------------------------------------------------
 // File snapshot helpers
 // ---------------------------------------------------------------------------
@@ -236,7 +249,8 @@ export async function executeSandboxTool(
           return { success: false, output: 'Error: Path parameter is required for write_file tool.' }
         }
 
-        const fullPath = resolveSandboxPath(userEmail, chatId, filePath)
+        // allowFallback=false: never redirect a write to a different same-named file
+        const fullPath = resolveSandboxPath(userEmail, chatId, filePath, false)
         if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
           return { success: false, output: `Error: Cannot write to '${filePath}' because it is a directory.` }
         }
@@ -357,7 +371,7 @@ export async function executeSandboxTool(
 
       case 'delete_file': {
         const filePath = String(params.path || params.filename || params.file || '')
-        const fullPath = resolveSandboxPath(userEmail, chatId, filePath)
+        const fullPath = resolveSandboxPath(userEmail, chatId, filePath, false)
         if (fs.existsSync(fullPath)) {
           fs.rmSync(fullPath, { recursive: true, force: true })
           return { success: true, output: `Deleted ${filePath}` }
@@ -398,7 +412,7 @@ export async function executeSandboxTool(
           tempFile,
           sandboxDir,
           label: 'Python',
-          env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', MPLBACKEND: 'Agg' },
+          env: { ...getChildEnv(), PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', MPLBACKEND: 'Agg' },
           missingModuleHelp: (output) => {
             const missingMod = output.match(/ModuleNotFoundError:\s*No module named ['"]([^'"]+)['"]/i)?.[1]
             if (!missingMod) return ''
@@ -427,7 +441,7 @@ export async function executeSandboxTool(
           tempFile,
           sandboxDir,
           label: 'Node.js',
-          env: { ...process.env, NODE_ENV: 'development' },
+          env: { ...getChildEnv(), NODE_ENV: 'development' },
           missingModuleHelp: (output) => {
             const missingMod = output.match(/Cannot find module ['"]([^'"]+)['"]/i)?.[1]
             return missingMod
@@ -449,8 +463,8 @@ export async function executeSandboxTool(
         if (safety.blocked) {
           return {
             success: false,
-            output: `Security Violation: Elevating privileges with 'sudo' or root commands is strictly forbidden in the sandbox.`,
-            error: `Security Violation: Command blocked (sudo/root forbidden).`,
+            output: safety.reason || `Security Violation: Command blocked by sandbox safety rules.`,
+            error: safety.reason || `Security Violation: Command blocked.`,
           }
         }
 
@@ -459,7 +473,7 @@ export async function executeSandboxTool(
         return new Promise((resolve) => {
           exec(
             command,
-            { cwd: sandboxDir, timeout: COMMAND_TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES },
+            { cwd: sandboxDir, timeout: COMMAND_TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES, env: getChildEnv() },
             (err, stdout, stderr) => {
               const createdFiles = detectNewOrModifiedFiles(sandboxDir, beforeFiles)
               const combined = [stdout, stderr].filter(Boolean).join('\n').trim()
