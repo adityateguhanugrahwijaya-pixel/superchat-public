@@ -4,6 +4,11 @@ import path from 'node:path'
 const EMAIL_REGEX = /^[A-Za-z0-9._@-]+$/
 const CHAT_ID_REGEX = /^[A-Za-z0-9_-]+$/
 
+export function isValidChatId(chatId: string): boolean {
+  const safe = (chatId || '').trim()
+  return Boolean(safe) && safe !== '.' && safe !== '..' && CHAT_ID_REGEX.test(safe)
+}
+
 /**
  * Validates user email and conversation chatId strictly.
  * Rejects path traversal markers ('.', '..'), path separators, or invalid characters.

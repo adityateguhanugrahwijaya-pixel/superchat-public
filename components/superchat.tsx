@@ -760,11 +760,65 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let answer = ''
+      const isSSE = response.headers.get('content-type')?.includes('text/event-stream')
+      let sseBuffer = ''
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        answer += decoder.decode(value, { stream: true })
+
+        const chunk = decoder.decode(value, { stream: true })
+
+        if (isSSE) {
+          sseBuffer += chunk
+          const parts = sseBuffer.split('\n\n')
+          sseBuffer = parts.pop() || ''
+
+          for (const part of parts) {
+            const lines = part.split('\n')
+            let eventType = 'message'
+            let eventData = ''
+
+            for (const line of lines) {
+              if (line.startsWith('event: ')) eventType = line.slice(7).trim()
+              if (line.startsWith('data: ')) eventData = line.slice(6).trim()
+            }
+
+            if (eventData) {
+              try {
+                const parsed = JSON.parse(eventData)
+                if (eventType === 'text-delta' && parsed.text) {
+                  answer += parsed.text
+                } else if (eventType === 'tool-call') {
+                  answer += `\n\n> 🛠️ **Executing Tool:** \`${parsed.name}\`...\n`
+                } else if (eventType === 'tool-result') {
+                  const icon = parsed.ok ? '✅' : '❌'
+                  const header = parsed.ok ? 'Output' : 'Execution Error'
+                  const snippet = (parsed.output || 'Command executed successfully.').trim()
+                  answer += `\n> ${icon} **${header}:**\n\`\`\`\n${snippet.slice(0, 4000)}\n\`\`\`\n\n`
+                } else if (eventType === 'file') {
+                  answer += `<file path="${parsed.path}">${parsed.title}</file>`
+                } else if (eventType === 'approval-required') {
+                  setPendingApproval({
+                    toolName: parsed.toolName || parsed.tool,
+                    reason: parsed.reason || parsed.summary,
+                    params: parsed.params,
+                  })
+                }
+              } catch {}
+            }
+          }
+        } else {
+          answer += chunk
+          const approvalMatch = answer.match(/<!-- approval_required:([\s\S]*?) -->/)
+          if (approvalMatch) {
+            try {
+              const approvalData = JSON.parse(approvalMatch[1])
+              setPendingApproval(approvalData)
+            } catch {}
+          }
+        }
+
         setMessages((current) =>
           current.map((item, index) => (index === current.length - 1 ? { ...item, content: answer } : item))
         )
@@ -1407,7 +1461,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
               ref={fileInputRef}
               style={{ display: 'none' }}
               onChange={handleFileUpload}
-              accept=".txt,.md,.json,.js,.ts,.jsx,.tsx,.py,.css,.html,.csv,.sql"
+              accept=".txt,.md,.json,.js,.ts,.jsx,.tsx,.py,.css,.html,.csv,.sql,.pdf,.xlsx,.docx,.pptx,.png,.jpg,.jpeg"
             />
             <div className="composer-footer">
               <div className="composer-toolbar">

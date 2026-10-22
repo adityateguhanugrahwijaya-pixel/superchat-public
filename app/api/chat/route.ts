@@ -7,6 +7,7 @@ import { isSandboxEnabled, isUserSandboxEnabled, resolveSandboxPath } from '@/li
 import { executeSandboxTool } from '@/lib/sandbox/executor'
 import { runAgent } from '@/lib/agent/engine'
 import { createLegacyEventStream } from '@/lib/agent/stream/legacy'
+import { createSSEEventStream } from '@/lib/agent/stream/sse'
 import { processUserAttachments } from '@/lib/agent/uploads'
 import { formatSkillsCatalogPrompt } from '@/lib/agent/skills/loader'
 import fs from 'node:fs'
@@ -501,6 +502,19 @@ export async function POST(request: NextRequest) {
         } catch {}
         activeAgentJobs.delete(chatId)
       }
+    }
+
+    const streamFormat = (process.env.STREAM_FORMAT || 'legacy').toLowerCase()
+    if (streamFormat === 'sse') {
+      const sseStream = createSSEEventStream(wrappedAgent())
+      return new Response(sseStream, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      })
     }
 
     const v2Stream = createLegacyEventStream(wrappedAgent())

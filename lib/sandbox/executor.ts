@@ -8,6 +8,8 @@ export type ToolExecutionResult = {
   filePath?: string
   fileTitle?: string
   presentedFiles?: Array<{ path: string; title: string }>
+  requiresApproval?: boolean
+  approvalReason?: string
 }
 
 /**
@@ -19,9 +21,10 @@ export async function executeSandboxTool(
   chatId: string,
   toolName: string,
   params: Record<string, any>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  approved?: boolean
 ): Promise<ToolExecutionResult> {
-  const res: ToolResult = await executeTool(userEmail, chatId, toolName, params, signal)
+  const res: ToolResult = await executeTool(userEmail, chatId, toolName, params, signal, approved)
   return {
     success: res.success,
     output: res.output,
@@ -29,5 +32,7 @@ export async function executeSandboxTool(
     filePath: res.filePath,
     fileTitle: res.fileTitle,
     presentedFiles: res.presentedFiles,
+    requiresApproval: res.requiresApproval,
+    approvalReason: res.approvalReason,
   }
 }

@@ -38,6 +38,15 @@ export const shellTool: ToolDefinition = {
         error: safety.reason || 'Security Violation: Command blocked.',
       }
     }
+    if (safety.requiresApproval && !context.approved) {
+      return {
+        success: false,
+        requiresApproval: true,
+        approvalReason: safety.reason,
+        output: safety.reason || 'Destructive Action: User confirmation required before execution.',
+        error: safety.reason || 'User confirmation required.',
+      }
+    }
 
     const beforeFiles = snapshotSandboxFiles(sessionDir)
     const sessionId = `${userEmail}/${chatId}`

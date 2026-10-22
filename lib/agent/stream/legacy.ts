@@ -32,8 +32,16 @@ export function encodeLegacyEvent(event: AgentEvent): string {
       }
       return `\n\n[Router Error ${event.message}]`
 
+    case 'approval-required': {
+      const payload = JSON.stringify({
+        toolName: event.toolName,
+        params: event.params,
+        reason: event.reason,
+      })
+      return `\n\n<!-- approval_required:${payload} -->\n\n> ⚠️ **Approval Required:** ${event.reason || 'This action requires confirmation.'}\n`
+    }
+
     case 'turn-start':
-    case 'approval-required':
     case 'usage':
     case 'done':
     default:

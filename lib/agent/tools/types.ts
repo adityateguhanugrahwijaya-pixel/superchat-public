@@ -22,6 +22,7 @@ export interface ToolContext {
   chatId: string
   sessionDir: string
   signal?: AbortSignal
+  approved?: boolean
 }
 
 export interface PresentedFile {
@@ -36,6 +37,8 @@ export interface ToolResult {
   filePath?: string
   fileTitle?: string
   presentedFiles?: PresentedFile[]
+  requiresApproval?: boolean
+  approvalReason?: string
 }
 
 export interface ToolDefinition {
