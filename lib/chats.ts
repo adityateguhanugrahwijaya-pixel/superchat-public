@@ -123,6 +123,10 @@ export function updateChatFile(userEmail: string, chatId: string, patch: Partial
 }
 
 export function deleteChatFile(userEmail: string, chatId: string): boolean {
+  try {
+    const { destroySession } = require('./sandbox/janitor')
+    destroySession(userEmail, chatId).catch(() => {})
+  } catch {}
   const filePath = getChatFilePath(userEmail, chatId)
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath)
@@ -138,6 +142,11 @@ export function deleteAllUserChats(userEmail: string): number {
   let count = 0
   for (const file of files) {
     try {
+      const chatId = file.replace(/\.json$/, '')
+      try {
+        const { destroySession } = require('./sandbox/janitor')
+        destroySession(userEmail, chatId).catch(() => {})
+      } catch {}
       fs.unlinkSync(path.join(dir, file))
       count++
     } catch {}
