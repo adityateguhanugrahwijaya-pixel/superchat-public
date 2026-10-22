@@ -7,20 +7,29 @@ export type SafetyAssessment = {
   reason?: string
 }
 
+type BlockRule = { pattern: RegExp; reason: string }
+
+const SUDO_REASON = `Security Violation: Elevating privileges with 'sudo' or root commands is strictly forbidden in the sandbox.`
+
 // Strictly forbidden commands (privilege elevation / system shutdown)
-const BLOCKED_PATTERNS = [
-  /^\s*sudo\b/i,
-  /\bsudo\s+/i,
-  /^\s*su\b/i,
-  /\bsu\s+root\b/i,
-  /\bdoas\b/i,
-  /\bpkexec\b/i,
-  /\brunas\b/i,
-  /\bshutdown\b/i,
-  /\breboot\b/i,
-  /\bpoweroff\b/i,
-  /\bchmod\s+777\b/i,
-  />\s*\/dev\/(sda|hda|nvme|null)/i,
+const BLOCK_RULES: BlockRule[] = [
+  { pattern: /^\s*sudo\b/i, reason: SUDO_REASON },
+  { pattern: /(?:^|[;&|(]\s*)sudo\s+/i, reason: SUDO_REASON },
+  { pattern: /^\s*su\b/i, reason: SUDO_REASON },
+  { pattern: /\bsu\s+root\b/i, reason: SUDO_REASON },
+  { pattern: /\bdoas\b/i, reason: SUDO_REASON },
+  { pattern: /\bpkexec\b/i, reason: SUDO_REASON },
+  { pattern: /\brunas\b/i, reason: SUDO_REASON },
+  // Only block these when they are used AS a command (start of line or after ; && | ),
+  // so things like `git commit -m "fix reboot bug"` are not blocked.
+  {
+    pattern: /(?:^|[;&|(]\s*)(?:shutdown|reboot|poweroff)\b/i,
+    reason: 'Security Violation: System shutdown/reboot commands are forbidden in the sandbox.',
+  },
+  { pattern: /\bchmod\s+777\b/i, reason: 'Security Violation: chmod 777 is forbidden in the sandbox.' },
+  // Writing to raw disks. NOTE: "> /dev/null" is harmless and common (e.g. `cmd 2>/dev/null`),
+  // so it is intentionally NOT blocked anymore.
+  { pattern: />\s*\/dev\/(?:sd[a-z]|hd[a-z]|nvme)/i, reason: 'Security Violation: Writing to raw disk devices is forbidden.' },
 ]
 
 // Destructive file/directory removal commands requiring 1-minute user confirmation
@@ -42,13 +51,13 @@ export function assessToolSafety(toolName: string, params: Record<string, any>):
   const cmd = String(params.command || params.cmd || '').trim()
 
   // 1. Check for strictly blocked commands (e.g. sudo)
-  for (const pattern of BLOCKED_PATTERNS) {
-    if (pattern.test(cmd)) {
+  for (const rule of BLOCK_RULES) {
+    if (rule.pattern.test(cmd)) {
       return {
         riskLevel: 'high',
         requiresApproval: false,
         blocked: true,
-        reason: `Security Violation: Elevating privileges with 'sudo' or root commands is strictly forbidden in the sandbox.`,
+        reason: rule.reason,
       }
     }
   }
