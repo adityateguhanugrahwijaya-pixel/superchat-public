@@ -321,11 +321,13 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Build system message capabilities
-  const capabilityPrompts: string[] = []
+  const sandboxActive = isUserSandboxEnabled(user.id)
 
-  if (isUserSandboxEnabled(user.id)) {
-    capabilityPrompts.push(
+  // Build single combined system message at index 0
+  const systemParts: string[] = []
+
+  if (sandboxActive) {
+    systemParts.push(
       `[System Workspace & Autonomous Sandbox Tool Capabilities]\n` +
         `You are SuperChat AI, an autonomous coding partner equipped with an active isolated sandbox workspace for this conversation.\n\n` +
         `CRITICAL FILE & TOOL RULES:\n` +
@@ -364,34 +366,39 @@ export async function POST(request: NextRequest) {
 
     const skillsPrompt = formatSkillsCatalogPrompt()
     if (skillsPrompt) {
-      capabilityPrompts.push(skillsPrompt)
+      systemParts.push(skillsPrompt)
     }
   }
 
   if (enableWebSearch) {
-    capabilityPrompts.push(
+    systemParts.push(
       `[Web Search Status: ACTIVE]\n` +
         `Live Web Search Grounding is ENABLED. You have access to real-time internet search context.\n` +
         `CRITICAL CITATION MANDATE: You MUST cite your references using markdown links like [Source Title](URL) directly in your response text. Always include clickable markdown links [Title](URL) for every source you use.`
     )
     if (searchGroundingPrompt) {
-      capabilityPrompts.push(searchGroundingPrompt)
+      systemParts.push(searchGroundingPrompt)
     }
   }
 
-  const effectiveSystemPrompt = chat.systemPrompt || settings?.globalSystemPrompt || ''
+  const defaultPersona = 'You are SuperChat AI, a helpful assistant.'
+  const effectiveSystemPrompt = (chat.systemPrompt || settings?.globalSystemPrompt || defaultPersona).trim()
   if (effectiveSystemPrompt) {
-    capabilityPrompts.push(effectiveSystemPrompt)
+    systemParts.push(effectiveSystemPrompt)
   }
 
-  const systemMessage = capabilityPrompts.map((text) => ({ role: 'system', content: text }))
+  const singleSystemPrompt = systemParts.filter(Boolean).join('\n\n')
+  const capabilityPrompts = [singleSystemPrompt]
+  const systemMessage = [{ role: 'system', content: singleSystemPrompt }]
 
   // Intercept user attachments, save to sandbox uploads/ and generate metadata
   const { processedContent } = processUserAttachments(user.email, chatId, content)
   const effectiveContent = processedContent || content
 
-  // Strip non-system/history messages for context
-  const history = chat.messages.map((m) => ({ role: m.role, content: m.content }))
+  // Strip any system messages from history so only 1 system message is at index 0
+  const history = chat.messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => ({ role: m.role, content: m.content }))
   const apiMessages = [...systemMessage, ...history, { role: 'user', content: effectiveContent }]
 
   // Add user message to chat file
@@ -402,8 +409,6 @@ export async function POST(request: NextRequest) {
     createdAt: new Date().toISOString(),
   }
   chat.messages.push(userMsg)
-
-  const sandboxActive = isUserSandboxEnabled(user.id)
 
   // Add initial assistant message placeholder
   const assistantMsgId = crypto.randomUUID()

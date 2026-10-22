@@ -4,7 +4,7 @@ import { AgentEvent } from './events'
 import { streamChatCompletions, LLMMessage } from './llm/client'
 import { extractTextToolCalls, createToolCallFilter } from './llm/toolcall-text'
 import { toolRegistry } from './tools/registry'
-import { getModelCapabilities, saveCachedCapabilities, ModelCapabilities } from './llm/capabilities'
+import { getModelCapabilities, saveCachedCapabilities, ModelCapabilities, SystemRole } from './llm/capabilities'
 import { executeSandboxTool } from '../sandbox/executor'
 import { resolveSandboxPath } from '../sandbox/paths'
 
@@ -76,12 +76,43 @@ export async function* runAgent(
   let fullAssistantText = ''
   const recordedToolCalls: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }> = []
 
-  // Build initial message context
+  // Build initial message context with a single consolidated system message at index 0
+  const historySystemTexts = history.filter((m) => m.role === 'system').map((m) => m.content)
+  const nonSystemHistory = history.filter((m) => m.role !== 'system').map((m) => ({ role: m.role, content: m.content }))
+  const combinedSystemPrompt =
+    [...systemMessages, ...historySystemTexts]
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join('\n\n') || 'You are SuperChat AI, a helpful assistant.'
+
   const apiMessages: LLMMessage[] = [
-    ...systemMessages.map((text) => ({ role: 'system' as const, content: text })),
-    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: 'system' as const, content: combinedSystemPrompt },
+    ...nonSystemHistory,
     { role: 'user' as const, content: userMessage },
   ]
+
+  const buildTurnMessages = (baseMessages: LLMMessage[], systemRole: SystemRole = 'system'): LLMMessage[] => {
+    const sysText =
+      baseMessages
+        .filter((m) => m.role === 'system')
+        .map((m) => m.content)
+        .filter(Boolean)
+        .join('\n\n') || combinedSystemPrompt
+    const rest = baseMessages.filter((m) => m.role !== 'system').map((m) => ({ ...m }))
+
+    if (systemRole === 'user-prefix') {
+      const firstUserIdx = rest.findIndex((m) => m.role === 'user')
+      if (firstUserIdx !== -1 && sysText) {
+        rest[firstUserIdx] = {
+          ...rest[firstUserIdx],
+          content: `<instructions>\n${sysText}\n</instructions>\n\n${rest[firstUserIdx].content}`,
+        }
+      }
+      return rest
+    }
+
+    return [{ role: 'system' as const, content: sysText }, ...rest]
+  }
 
   let doneReason: 'completed' | 'max_turns' | 'max_tool_calls' | 'wall_clock' | 'cancelled' | 'llm_error' =
     'completed'
@@ -90,11 +121,12 @@ export async function* runAgent(
 
   let caps: ModelCapabilities = options.capabilities || {
     toolMode: 'text',
+    systemRole: 'system',
     contextWindow: 32768,
     supportsVision: false,
     supportsUsage: true,
   }
-  if (!options.capabilities && sandboxActive) {
+  if (!options.capabilities) {
     try {
       caps = await getModelCapabilities(endpointUrl, model, apiKey)
     } catch {
@@ -137,15 +169,17 @@ export async function* runAgent(
       let turnText = ''
       const accumulatedNativeTools: Record<number, { id: string; name: string; arguments: string }> = {}
 
-      const executeStreamTurn = async function* (withTools: boolean) {
+      const executeStreamTurn = async function* (withTools: boolean, systemRole: SystemRole = caps.systemRole || 'system') {
         const toolsSchema =
           sandboxActive && withTools ? toolRegistry.getOpenAISchema() : undefined
+
+        const turnMessages = buildTurnMessages(apiMessages, systemRole)
 
         const stream = streamChatCompletions({
           endpointUrl,
           apiKey,
           model,
-          messages: apiMessages,
+          messages: turnMessages,
           temperature,
           topP,
           maxTokens,
@@ -202,8 +236,11 @@ export async function* runAgent(
         }
       }
 
+      const isSystemRole400Error = (msg: string) =>
+        /400|bad_request/i.test(msg) && /system|developer|instruction|role/i.test(msg)
+
       try {
-        for await (const ev of executeStreamTurn(caps.toolMode === 'native')) {
+        for await (const ev of executeStreamTurn(caps.toolMode === 'native', caps.systemRole || 'system')) {
           yield ev
         }
       } catch (err: any) {
@@ -211,12 +248,34 @@ export async function* runAgent(
           doneReason = 'cancelled'
           break
         }
-        // Dynamic fallback: if native tools failed before any output, downgrade to text mode and retry
-        if (sandboxActive && caps.toolMode === 'native' && turnText === '' && Object.keys(accumulatedNativeTools).length === 0) {
+        const errMsg = String(err?.message || '')
+        const noOutputYet = turnText === '' && Object.keys(accumulatedNativeTools).length === 0
+
+        if (noOutputYet && (caps.systemRole || 'system') !== 'user-prefix' && isSystemRole400Error(errMsg)) {
+          caps = { ...caps, systemRole: 'user-prefix' }
+          saveCachedCapabilities(endpointUrl, model, caps)
+          try {
+            for await (const ev of executeStreamTurn(caps.toolMode === 'native', 'user-prefix')) {
+              yield ev
+            }
+          } catch (retryErr: any) {
+            if (signal?.aborted || retryErr?.message?.includes('cancelled')) {
+              doneReason = 'cancelled'
+            } else {
+              doneReason = 'llm_error'
+              fatalErrorCode = 'LLM_ERROR'
+              fatalErrorDetail = retryErr?.message || 'LLM error'
+              console.error('[Agent LLM Error]', fatalErrorDetail)
+              yield { type: 'error', code: 'LLM_ERROR', message: 'Proses gagal, coba lagi', retryable: true }
+            }
+            break
+          }
+        } else if (sandboxActive && caps.toolMode === 'native' && noOutputYet) {
+          // Dynamic fallback: if native tools failed before any output, downgrade to text mode and retry
           caps = { ...caps, toolMode: 'text' }
           saveCachedCapabilities(endpointUrl, model, caps)
           try {
-            for await (const ev of executeStreamTurn(false)) {
+            for await (const ev of executeStreamTurn(false, caps.systemRole || 'system')) {
               yield ev
             }
           } catch (retryErr: any) {

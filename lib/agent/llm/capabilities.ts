@@ -1,9 +1,11 @@
 import { sqlite } from '../../db'
 
 export type ToolMode = 'native' | 'text'
+export type SystemRole = 'system' | 'user-prefix'
 
 export interface ModelCapabilities {
   toolMode: ToolMode
+  systemRole?: SystemRole
   contextWindow: number
   supportsVision: boolean
   supportsUsage: boolean
@@ -11,6 +13,7 @@ export interface ModelCapabilities {
 
 const DEFAULT_CAPABILITIES: ModelCapabilities = {
   toolMode: 'text',
+  systemRole: 'system',
   contextWindow: 32_768,
   supportsVision: false,
   supportsUsage: false,
@@ -26,6 +29,7 @@ try {
       router_url TEXT NOT NULL,
       model TEXT NOT NULL,
       tool_mode TEXT NOT NULL,
+      system_role TEXT NOT NULL DEFAULT 'system',
       context_window INTEGER NOT NULL,
       supports_vision INTEGER NOT NULL,
       supports_usage INTEGER NOT NULL,
@@ -35,15 +39,20 @@ try {
   `)
 } catch {}
 
+try {
+  sqlite.exec(`ALTER TABLE model_capabilities ADD COLUMN system_role TEXT NOT NULL DEFAULT 'system'`)
+} catch {}
+
 function getCachedCapabilities(routerUrl: string, model: string): ModelCapabilities | null {
   try {
     const row = sqlite
       .prepare(
-        'SELECT tool_mode, context_window, supports_vision, supports_usage, updated_at FROM model_capabilities WHERE router_url = ? AND model = ?'
+        'SELECT tool_mode, system_role, context_window, supports_vision, supports_usage, updated_at FROM model_capabilities WHERE router_url = ? AND model = ?'
       )
       .get(routerUrl, model) as
       | {
           tool_mode: string
+          system_role?: string
           context_window: number
           supports_vision: number
           supports_usage: number
@@ -54,6 +63,7 @@ function getCachedCapabilities(routerUrl: string, model: string): ModelCapabilit
     if (row && Date.now() - row.updated_at < CAPABILITIES_TTL_MS) {
       return {
         toolMode: row.tool_mode === 'native' ? 'native' : 'text',
+        systemRole: row.system_role === 'user-prefix' ? 'user-prefix' : 'system',
         contextWindow: Math.min(row.context_window, MAX_CONTEXT_CAP),
         supportsVision: Boolean(row.supports_vision),
         supportsUsage: Boolean(row.supports_usage),
@@ -69,12 +79,14 @@ export function saveCachedCapabilities(
   caps: ModelCapabilities
 ): void {
   try {
+    const sysRole: SystemRole = caps.systemRole === 'user-prefix' ? 'user-prefix' : 'system'
     sqlite
       .prepare(
-        `INSERT INTO model_capabilities (router_url, model, tool_mode, context_window, supports_vision, supports_usage, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO model_capabilities (router_url, model, tool_mode, system_role, context_window, supports_vision, supports_usage, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(router_url, model) DO UPDATE SET
            tool_mode = excluded.tool_mode,
+           system_role = excluded.system_role,
            context_window = excluded.context_window,
            supports_vision = excluded.supports_vision,
            supports_usage = excluded.supports_usage,
@@ -84,6 +96,7 @@ export function saveCachedCapabilities(
         routerUrl,
         model,
         caps.toolMode,
+        sysRole,
         caps.contextWindow,
         caps.supportsVision ? 1 : 0,
         caps.supportsUsage ? 1 : 0,
@@ -164,8 +177,10 @@ export async function getModelCapabilities(
   // 1. Manual override via env (e.g. AGENT_FORCE_TOOL_MODE=native|text)
   const forcedMode = process.env.AGENT_FORCE_TOOL_MODE
   if (forcedMode === 'native' || forcedMode === 'text') {
+    const cached = getCachedCapabilities(routerUrl, model)
     return {
       toolMode: forcedMode,
+      systemRole: cached?.systemRole || 'system',
       contextWindow: Math.min(modelMetadata?.context_window || DEFAULT_CAPABILITIES.contextWindow, MAX_CONTEXT_CAP),
       supportsVision: Boolean(modelMetadata?.vision),
       supportsUsage: true,
@@ -194,6 +209,7 @@ export async function getModelCapabilities(
 
   const resolved: ModelCapabilities = {
     toolMode: supportsNative ? 'native' : 'text',
+    systemRole: 'system',
     contextWindow: Math.min(modelMetadata?.context_window || DEFAULT_CAPABILITIES.contextWindow, MAX_CONTEXT_CAP),
     supportsVision: Boolean(modelMetadata?.vision),
     supportsUsage: true,
