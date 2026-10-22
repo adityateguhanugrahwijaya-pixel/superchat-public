@@ -97,6 +97,12 @@ else
     echo "✓ Configuration file found (.env.local / appconfig.json)."
 fi
 
+# 3b. Sandbox runtime: checks Python, creates the .sandbox-venv environment and
+#     installs packages. Does nothing if the sandbox is disabled. Never blocks startup.
+if [ -f "scripts/setup-sandbox.js" ]; then
+    node scripts/setup-sandbox.js || echo "⚠️  Sandbox setup did not finish. SuperChat will still start, but Python tools may not work."
+fi
+
 # 4. Build application if missing or incomplete
 if [ ! -f ".next/BUILD_ID" ]; then
     echo ""
