@@ -5,10 +5,12 @@ import { getChat, createChatFile, saveChat, MessageItem } from '@/lib/chats'
 import { performWebSearch } from '@/lib/websearch'
 import { isSandboxEnabled, isUserSandboxEnabled, resolveSandboxPath } from '@/lib/sandbox'
 import { executeSandboxTool } from '@/lib/sandbox/executor'
+import { runAgent } from '@/lib/agent/engine'
+import { createLegacyEventStream } from '@/lib/agent/stream/legacy'
 import fs from 'node:fs'
 
 // In-memory registry for background running jobs
-const activeAgentJobs = new Map<string, { cancel: boolean; startedAt: number }>()
+const activeAgentJobs = new Map<string, { cancel: boolean; startedAt: number; abortController?: AbortController }>()
 
 const KNOWN_TOOLS = new Set([
   'run_python',
@@ -205,7 +207,10 @@ export async function DELETE(request: NextRequest) {
     const chatId = searchParams.get('chatId')
     if (chatId) {
       const job = activeAgentJobs.get(chatId)
-      if (job) job.cancel = true
+      if (job) {
+        job.cancel = true
+        job.abortController?.abort()
+      }
       const chat = getChat(user.email, chatId)
       if (chat) {
         chat.isAgentRunning = false
@@ -237,7 +242,10 @@ export async function POST(request: NextRequest) {
   if (body.cancel || body.action === 'cancel') {
     if (chatId) {
       const job = activeAgentJobs.get(chatId)
-      if (job) job.cancel = true
+      if (job) {
+        job.cancel = true
+        job.abortController?.abort()
+      }
       const chat = getChat(user.email, chatId)
       if (chat) {
         chat.isAgentRunning = false
@@ -400,9 +408,97 @@ export async function POST(request: NextRequest) {
   saveChat(user.email, chat)
 
   // Set up job tracker
-  const currentJob = { cancel: false, startedAt: Date.now() }
+  const abortController = new AbortController()
+  const currentJob = { cancel: false, startedAt: Date.now(), abortController }
   if (sandboxActive) {
     activeAgentJobs.set(chatId, currentJob)
+  }
+
+  const useV2Engine = process.env.AGENT_ENGINE === 'v2'
+
+  if (useV2Engine) {
+    let finalAssistantText = ''
+    let recordedToolCalls: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }> = []
+    let promptTokens = 0
+    let completionTokens = 0
+
+    const agentGen = runAgent({
+      userEmail: user.email,
+      chatId,
+      model,
+      endpointUrl,
+      apiKey,
+      systemMessages: capabilityPrompts,
+      history,
+      userMessage: content,
+      temperature,
+      topP,
+      maxTokens,
+      sandboxActive,
+      signal: abortController.signal,
+      onProgressSave: async (text, toolCalls) => {
+        finalAssistantText = text
+        recordedToolCalls = toolCalls
+        const liveChat = getChat(user.email, chatId)
+        if (liveChat) {
+          const idx = liveChat.messages.findIndex((m) => m.id === assistantMsgId)
+          if (idx !== -1) {
+            liveChat.messages[idx].toolCalls = [...toolCalls]
+            liveChat.messages[idx].content = cleanAssistantContent(text)
+            liveChat.updatedAt = new Date().toISOString()
+            saveChat(user.email, liveChat)
+          }
+        }
+      },
+    })
+
+    async function* wrappedAgent() {
+      try {
+        for await (const event of agentGen) {
+          if (event.type === 'usage') {
+            promptTokens = event.promptTokens
+            completionTokens = event.completionTokens
+          }
+          yield event
+        }
+      } finally {
+        try {
+          const finalChat = getChat(user.email, chatId)
+          if (finalChat) {
+            const idx = finalChat.messages.findIndex((m) => m.id === assistantMsgId)
+            const cleaned = cleanAssistantContent(finalAssistantText)
+            if (idx !== -1) {
+              finalChat.messages[idx].content = cleaned
+              if (recordedToolCalls.length > 0) {
+                finalChat.messages[idx].toolCalls = [...recordedToolCalls]
+              }
+            }
+            finalChat.isAgentRunning = false
+            finalChat.updatedAt = new Date().toISOString()
+            saveChat(user.email, finalChat)
+          }
+
+          const tokensUsed =
+            promptTokens + completionTokens > 0
+              ? promptTokens + completionTokens
+              : Math.max(1, Math.ceil((content.length + finalAssistantText.length) / 4))
+
+          db.prepare(
+            `INSERT INTO usage_logs (id, user_id, usage_date, tokens_used, model, router_url) VALUES (?, ?, DATE('now'), ?, ?, ?)`
+          ).run(crypto.randomUUID(), user.id, tokensUsed, model, activeRouterUrl)
+        } catch {}
+        activeAgentJobs.delete(chatId)
+      }
+    }
+
+    const v2Stream = createLegacyEventStream(wrappedAgent())
+    return new Response(v2Stream, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'X-Content-Type-Options': 'nosniff',
+      },
+    })
   }
 
   const encoder = new TextEncoder()

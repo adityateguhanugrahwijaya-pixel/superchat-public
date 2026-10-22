@@ -58,3 +58,39 @@ Root sesi: `sandbox/{safeEmail}/{chatId}/`
   - Kuota Disk: Membatasi penggunaan disk maksimum 500 MB per pengguna (menghapus sesi tertua jika kuota terlampaui).
   - Pengecualian: Sesi yang sedang berjalan (`isAgentRunning === true`) tidak disentuh.
   - Penjadwalan: Otomatis dijalankan saat server start dan tiap 6 jam via `instrumentation.ts`.
+
+
+---
+
+## 4. Agent Engine v2 & LLM Client (Fase 2)
+
+### Loop Eksekusi (`lib/agent/engine.ts`)
+- **Async Generator**: Fungsi `runAgent` menghasilkan stream `AgentEvent` terstruktur (`turn-start`, `text-delta`, `tool-call`, `tool-result`, `file`, `usage`, `error`, `done`).
+- **Perbaikan Bug F11 (Multiple Tool Duplicate Assistant)**: Pesan assistant dimasukkan ke riwayat konteks (`apiMessages`) tepat satu kali per turn sebelum feedback eksekusi tool, mencegah duplikasi histori saat satu turn memanggil beberapa tool sekaligus.
+- **Batas Pengaman Loop**:
+  - `maxTurns`: Dibatasi via `AGENT_MAX_TURNS` (default: 25 untuk sandbox aktif, 1 untuk chat biasa).
+  - `maxToolCalls`: Dibatasi via `AGENT_MAX_TOOL_CALLS` (default: 60).
+  - `wallClockMs`: Dibatasi via `AGENT_WALL_CLOCK_MS` (default: 10 menit).
+- **Validasi File Dinamis**: Memverifikasi keberadaan file fisik di workspace ketika model menyertakan tag `<file path="...">`. Jika file belum dibuat, sistem mengirim pesan koreksi ke model dan menghapus tag palsu dari riwayat.
+
+### Klien LLM Tangguh (`lib/agent/llm/client.ts`)
+- **Retry dengan Exponential Backoff**: Menangani status 429 (rate limit) dan 5xx (server error) secara otomatis dengan jeda eksponensial (1s, 2s, 4s).
+- **Pembatalan Cepat (AbortSignal)**: Mendengarkan sinyal pembatalan (`signal.aborted`) dan menghentikan koneksi HTTP upstream secara instan.
+- **Isolasi Reasoning**: Token reasoning (`reasoning_content` atau `reasoning`) dipisahkan dari teks jawaban pengguna.
+- **Pelacakan Token Penggunaan**: Menangkap metrik token riil dari upstream melalui `stream_options: { include_usage: true }`.
+
+### Deteksi Kapabilitas Model & Cache SQLite (`lib/agent/llm/capabilities.ts`)
+- **Urutan Resolusi Kapabilitas**:
+  1. Override manual (`AGENT_FORCE_TOOL_MODE=native|text`).
+  2. Cache SQLite lokal di tabel `model_capabilities` (dengan TTL 7 hari).
+  3. Runtime Probe: Mengirim satu request minimal dengan tool dummy untuk mendeteksi apakah model mendukung native tool calling secara riil.
+  4. Fallback aman: Mode text tool-call.
+- **Context Window Budgeting**: Dibatasi oleh `min(context_window, AGENT_CONTEXT_CAP)` dengan batas atas default 100k token.
+
+### Parser Toolcall Teks (`lib/agent/llm/toolcall-text.ts`)
+- Mendukung format tunggal, format array `[{"tool":...}]`, trailing comma, tool name sebagai key objek, dan tag `<tool_call>`.
+- Pembersihan string JSON untuk menangani baris baru (unescaped newline) pada blok kode Python atau argumen teks.
+
+### Paritas Stream Warisan (`lib/agent/stream/legacy.ts`)
+- Menjamin kecocokan format output byte-demi-byte dengan format legacy UI (`> 🛠️ **Executing Tool:**`, `> ✅ **Output:**`, tag `<file>`).
+- Flag kompatibilitas: `AGENT_ENGINE=legacy|v2` (default: `legacy` sampai seluruh fase selesai dan lolos pengujian).
