@@ -186,11 +186,11 @@ export async function getModelCapabilities(
     }
   }
 
-  // 3. Optimistic native mode (or active probe if AGENT_PROBE_TOOLS=true)
+  // 3. Probe test (if AGENT_PROBE_TOOLS=true) or safe text fallback (matching system prompt)
   const shouldProbe = process.env.AGENT_PROBE_TOOLS === 'true'
-  const supportsNative = shouldProbe
-    ? (apiKey ? await probeNativeTools(routerUrl, model, apiKey) : false)
-    : Boolean(apiKey)
+  const supportsNative = shouldProbe && apiKey
+    ? await probeNativeTools(routerUrl, model, apiKey)
+    : false
 
   const resolved: ModelCapabilities = {
     toolMode: supportsNative ? 'native' : 'text',

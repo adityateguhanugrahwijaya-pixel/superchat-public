@@ -274,9 +274,13 @@ function CodeBlock({ inline, className, children, node, ...props }: any) {
 function ToolBadgeCard({
   tool,
   defaultExpanded = false,
+  statusLabel,
+  onRetry,
 }: {
   tool: { toolName: string; status: 'running' | 'success' | 'failed'; output?: string }
   defaultExpanded?: boolean
+  statusLabel?: string
+  onRetry?: () => void
 }) {
   const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded)
   const [copied, setCopied] = useState<boolean>(false)
@@ -308,8 +312,21 @@ function ToolBadgeCard({
             {tool.status === 'running' && <span className="tool-pulse-dot" />}
             {tool.status === 'success' && <CheckCircle2 size={12} />}
             {tool.status === 'failed' && <AlertCircle size={12} />}
-            <span>{tool.status === 'running' ? 'Running' : tool.status === 'success' ? 'Completed' : 'Failed'}</span>
+            <span>
+              {statusLabel ||
+                (tool.status === 'running' ? 'Running' : tool.status === 'success' ? 'Completed' : 'Failed')}
+            </span>
           </div>
+
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              title="Coba Lagi"
+            >
+              <span>Coba Lagi</span>
+            </button>
+          )}
 
           {tool.output && (
             <button
@@ -364,6 +381,13 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     streamingRef.current = streaming
   }, [streaming])
   const [isAgentRunning, setIsAgentRunning] = useState(false)
+  const [agentActivity, setAgentActivity] = useState<string>('idle')
+  const [runStatus, setRunStatus] = useState<{
+    state: 'running' | 'completed' | 'failed'
+    code?: string
+    userMessage?: string
+    detail?: string
+  } | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [historySearch, setHistorySearch] = useState('')
@@ -504,6 +528,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     if (!activeId) return
     await fetch(`/api/chat?chatId=${activeId}`, { method: 'DELETE' }).catch(() => {})
     setIsAgentRunning(false)
+    setAgentActivity('idle')
     setStreaming(false)
   }
 
@@ -526,21 +551,31 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
           if (Array.isArray(data)) {
             setMessages(data)
             setIsAgentRunning(false)
+            setAgentActivity('idle')
+            setRunStatus(null)
           } else if (data && Array.isArray(data.messages)) {
             setMessages(data.messages)
             setIsAgentRunning(Boolean(data.isAgentRunning))
+            setAgentActivity(data.activity || 'idle')
+            setRunStatus(data.runStatus || null)
           } else {
             setMessages([])
             setIsAgentRunning(false)
+            setAgentActivity('idle')
+            setRunStatus(null)
           }
         })
         .catch(() => {
           setMessages([])
           setIsAgentRunning(false)
+          setAgentActivity('idle')
+          setRunStatus(null)
         })
     } else {
       setMessages([])
       setIsAgentRunning(false)
+      setAgentActivity('idle')
+      setRunStatus(null)
     }
   }, [activeId])
 
@@ -565,7 +600,20 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
           if (data && Array.isArray(data.messages)) {
             const running = Boolean(data.isAgentRunning)
             setIsAgentRunning(running)
-            setMessages(data.messages)
+            setAgentActivity(data.activity || 'idle')
+            setRunStatus(data.runStatus || null)
+            setMessages((prev) =>
+              data.messages.map((srvMsg: any, i: number) => {
+                const localMsg = prev[i]
+                const mergedContent =
+                  srvMsg.content && srvMsg.content.trim().length > 0
+                    ? srvMsg.content
+                    : localMsg && localMsg.role === srvMsg.role && localMsg.content
+                      ? cleanAssistantContent(localMsg.content)
+                      : srvMsg.content || ''
+                return { ...localMsg, ...srvMsg, content: mergedContent }
+              })
+            )
           }
         })
         .catch(() => {})
@@ -718,6 +766,8 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     setInput('')
     setStreaming(true)
     setIsAgentRunning(true)
+    setAgentActivity('thinking')
+    setRunStatus(null)
 
     const userMessage = { role: 'user' as const, content: text }
     const assistantMessage = { role: 'assistant' as const, content: '' }
@@ -783,8 +833,10 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                 if (eventType === 'text-delta' && parsed.text) {
                   answer += parsed.text
                 } else if (eventType === 'tool-call') {
+                  setAgentActivity(`tool:${parsed.name}`)
                   answer += `\n\n> 🛠️ **Executing Tool:** \`${parsed.name}\`...\n`
                 } else if (eventType === 'tool-result') {
+                  setAgentActivity('thinking')
                   const icon = parsed.ok ? '✅' : '❌'
                   const header = parsed.ok ? 'Output' : 'Execution Error'
                   const snippet = (parsed.output || 'Command executed successfully.').trim()
@@ -824,8 +876,22 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
           if (syncRes.ok) {
             const syncData = await syncRes.json()
             if (syncData && Array.isArray(syncData.messages)) {
-              setMessages(syncData.messages)
+              setMessages((prev) =>
+                syncData.messages.map((serverMsg: any, idx: number) => {
+                  const prevMsg = prev[idx]
+                  if (prevMsg && prevMsg.role === 'assistant') {
+                    const resolvedContent =
+                      serverMsg.content && serverMsg.content.trim().length > 0
+                        ? serverMsg.content
+                        : prevMsg.content
+                    return { ...serverMsg, content: resolvedContent }
+                  }
+                  return serverMsg
+                })
+              )
               setIsAgentRunning(Boolean(syncData.isAgentRunning))
+              setAgentActivity(syncData.activity || (syncData.isAgentRunning ? 'thinking' : 'idle'))
+              setRunStatus(syncData.runStatus || null)
             }
           }
         } catch {}
@@ -842,18 +908,51 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
         .catch(() => {})
     } catch (error: any) {
       const displayErr = error?.message || 'An error occurred while communicating with the router.'
+      const failedStatus = {
+        state: 'failed' as const,
+        code: 'router_error',
+        userMessage: 'Proses gagal, coba lagi',
+        detail: displayErr,
+      }
+      setRunStatus(failedStatus)
       setMessages((current) =>
         current.map((item, index) =>
           index === current.length - 1
-            ? { ...item, content: displayErr.startsWith('⚠️') ? displayErr : `⚠️ ${displayErr}` }
+            ? { ...item, runStatus: failedStatus }
             : item
         )
       )
     } finally {
       setStreaming(false)
       setIsAgentRunning(false)
+      setAgentActivity('idle')
     }
 
+  }
+
+  async function handleRetryMessage(assistantMsgIndex: number) {
+    if (streaming) return
+    let userIdx = assistantMsgIndex - 1
+    while (userIdx >= 0 && messages[userIdx]?.role !== 'user') {
+      userIdx--
+    }
+    if (userIdx < 0) return
+    const textToResend = messages[userIdx].content.trim()
+    if (!textToResend) return
+
+    const truncatedMessages = messages.slice(0, userIdx)
+    setMessages(truncatedMessages)
+    setRunStatus(null)
+
+    if (activeId) {
+      await fetch(`/api/chats/${activeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: truncatedMessages }),
+      }).catch(() => {})
+    }
+
+    await sendMessage(undefined, textToResend)
   }
 
   // Branching: Drop all messages after edited user message & resubmit from that point
@@ -1185,7 +1284,11 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                 <div className="bg-agent-info">
                   <span className="bg-agent-pulse-dot" />
                   <Bot size={16} />
-                  <span>Agent is running background tools... (will continue even if tab is closed)</span>
+                  <span>
+                    {agentActivity && agentActivity !== 'idle'
+                      ? `Sedang bekerja (${agentActivity})...`
+                      : 'Agent is running background tools... (will continue even if tab is closed)'}
+                  </span>
                 </div>
                 <button className="bg-agent-stop-btn" onClick={handleStopAgent}>
                   <X size={13} /> Stop Agent
@@ -1329,11 +1432,11 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                                 const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi
 
                                 const isLastMessage = index === messages.length - 1
-                                const isBusy = isLastMessage && isAgentRunning
+                                const isBusy = isLastMessage && (isAgentRunning || (agentActivity !== undefined && agentActivity !== 'idle'))
+                                const activeActivityLabel = isBusy ? (agentActivity && agentActivity !== 'idle' ? agentActivity : 'thinking') : null
+                                const hasRunningToolCard = combinedToolCalls.some((t: any) => t.status === 'running')
+                                const msgRunStatus = (message as any).runStatus || (isLastMessage ? runStatus : undefined)
                                 let cleanContent = textAfterToolCleanup
-                                if (!cleanContent && !thinking && combinedToolCalls.length === 0) {
-                                  cleanContent = isBusy ? 'Executing sandbox tasks…' : ''
-                                }
                                 // Strip bare or malformed <file> tags without path
                                 cleanContent = cleanContent.replace(/<file(?:\s+path=["']\s*["'])?\s*>[\s\S]*?<\/file>|<file\s*\/?>/gi, '')
                                 let match
@@ -1351,7 +1454,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
 
                                 return (
                                   <>
-                                    {combinedToolCalls.length > 0 && (
+                                    {(combinedToolCalls.length > 0 || activeActivityLabel || (!isBusy && msgRunStatus?.state === 'failed')) && (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '8px 0 12px' }}>
                                         {combinedToolCalls.map((tool: any, tIdx: number) => (
                                           <ToolBadgeCard
@@ -1360,6 +1463,25 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                                             defaultExpanded={showToolOutputs}
                                           />
                                         ))}
+                                        {activeActivityLabel && (activeActivityLabel === 'thinking' || !hasRunningToolCard) && (
+                                          <ToolBadgeCard
+                                            key={`activity-${activeActivityLabel}`}
+                                            tool={{ toolName: activeActivityLabel, status: 'running' }}
+                                            statusLabel="Sedang bekerja"
+                                          />
+                                        )}
+                                        {!isBusy && msgRunStatus?.state === 'failed' && (
+                                          <ToolBadgeCard
+                                            key="run-status-failed"
+                                            tool={{
+                                              toolName: msgRunStatus.userMessage || 'Proses gagal, coba lagi',
+                                              status: 'failed',
+                                              output: msgRunStatus.detail,
+                                            }}
+                                            statusLabel="Gagal"
+                                            onRetry={() => handleRetryMessage(index)}
+                                          />
+                                        )}
                                       </div>
                                     )}
 

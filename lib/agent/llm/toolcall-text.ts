@@ -367,14 +367,26 @@ export function createToolCallFilter(): ToolCallStreamFilter {
 }
 
 /**
+ * Strips router errors and Execution Error tool headers so they never enter message.content,
+ * without touching legitimate model conversational text (such as "Error", "Traceback", or code blocks).
+ */
+export function stripErrorPatterns(rawText: string): string {
+  if (!rawText) return ''
+  return rawText
+    .replace(/\[Router Error[^\]]*\]/gi, '')
+    .replace(/(?:^|\n)>?\s*(?:❌\s*)?\*\*Execution Error:\*\*[^\r\n]*/gi, '')
+    .replace(/(?:^|\n)>?\s*Execution Error:[^\r\n]*/gi, '')
+}
+
+/**
  * Robustly strips raw tool calls, tool execution indicators, and tool outputs from assistant text,
  * correctly handling nested code fences (such as SKILL.md containing ```python code blocks).
  */
 export function cleanAssistantContent(rawText: string): string {
   if (!rawText) return ''
 
-  // 1. Strip raw tool call blocks (both fenced and XML) and feedback headers
-  let text = rawText
+  // 1. Strip raw tool call blocks (both fenced and XML), router errors, stack traces, and feedback headers
+  let text = stripErrorPatterns(rawText)
     .replace(/(?:```(?:tool_call|toolcall|tool)\s*[\s\S]*?(?:```|$)|<tool_call>\s*[\s\S]*?(?:<\/tool_call>|$))/gi, '')
     .replace(/<!-- approval_required:[\s\S]*?-->/gi, '')
     .replace(/\[System Tool Execution Feedback\][\s\S]*?(?=\n\n|$)/gi, '')

@@ -1,4 +1,5 @@
 import { AgentEvent } from '../events'
+import { stripErrorPatterns } from '../llm/toolcall-text'
 
 /**
  * Legacy Stream Encoder
@@ -6,12 +7,13 @@ import { AgentEvent } from '../events'
  * - Indicator: "> 🛠️ **Executing Tool:** `tool_name`..."
  * - Output: "> ✅ **Output:**\n```\n...\n```" or "> ❌ **Execution Error:**\n```\n...\n```"
  * - File card tag: "<file path="...">Judul</file>"
+ * - Error events are never emitted as text into message.content.
  */
 
 export function encodeLegacyEvent(event: AgentEvent): string {
   switch (event.type) {
     case 'text-delta':
-      return event.text
+      return stripErrorPatterns(event.text)
 
     case 'tool-call':
       return `\n\n> 🛠️ **Executing Tool:** \`${event.name}\`...\n`
@@ -26,12 +28,6 @@ export function encodeLegacyEvent(event: AgentEvent): string {
     case 'file':
       return `<file path="${event.path}">${event.title}</file>`
 
-    case 'error':
-      if (event.message.startsWith('[Router Error')) {
-        return `\n\n${event.message}`
-      }
-      return `\n\n[Router Error ${event.message}]`
-
     case 'approval-required': {
       const payload = JSON.stringify({
         toolName: event.toolName,
@@ -41,6 +37,7 @@ export function encodeLegacyEvent(event: AgentEvent): string {
       return `\n\n<!-- approval_required:${payload} -->\n\n> ⚠️ **Approval Required:** ${event.reason || 'This action requires confirmation.'}\n`
     }
 
+    case 'error':
     case 'turn-start':
     case 'usage':
     case 'done':
@@ -50,32 +47,51 @@ export function encodeLegacyEvent(event: AgentEvent): string {
 }
 
 /**
- * Pipes an async generator of AgentEvents into a TextEncoder ReadableStream
+ * Pipes an async generator of AgentEvents into a TextEncoder ReadableStream.
+ * Decouples stream cancellation (e.g. closing browser tab) from the background generator loop
+ * so the agent continues executing in the background until completion.
  */
 export function createLegacyEventStream(
   eventGenerator: AsyncGenerator<AgentEvent, void, unknown>,
   onClose?: () => void
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
+  let streamClosed = false
 
   return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const event of eventGenerator) {
-          const chunkText = encodeLegacyEvent(event)
-          if (chunkText) {
-            controller.enqueue(encoder.encode(chunkText))
+    start(controller) {
+      const safeEnqueue = (text: string) => {
+        if (streamClosed || !text) return
+        try {
+          controller.enqueue(encoder.encode(text))
+        } catch {
+          streamClosed = true
+        }
+      }
+
+      ;(async () => {
+        try {
+          for await (const event of eventGenerator) {
+            const chunkText = encodeLegacyEvent(event)
+            if (chunkText) {
+              safeEnqueue(chunkText)
+            }
+          }
+        } catch (err: any) {
+          console.error('[LegacyEventStream Error]', err?.message || err)
+        } finally {
+          onClose?.()
+          if (!streamClosed) {
+            streamClosed = true
+            try {
+              controller.close()
+            } catch {}
           }
         }
-      } catch (err: any) {
-        const errMsg = err?.message || 'Agent stream error'
-        controller.enqueue(encoder.encode(`\n\n[Router Error ${errMsg}]`))
-      } finally {
-        onClose?.()
-        try {
-          controller.close()
-        } catch {}
-      }
+      })()
+    },
+    cancel() {
+      streamClosed = true
     },
   })
 }

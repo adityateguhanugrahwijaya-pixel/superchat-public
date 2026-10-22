@@ -14,11 +14,28 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json(chat.messages)
     }
 
+    if (chat.isAgentRunning || (chat.activity && chat.activity !== 'idle')) {
+      const globalJobs = (globalThis as any).__superchatActiveAgentJobs as Map<string, any> | undefined
+      const hasInMemoryJob = globalJobs ? globalJobs.has(chat.id) : false
+      const updatedMs = chat.updatedAt ? new Date(chat.updatedAt).getTime() : 0
+      const ageMs = updatedMs ? Date.now() - updatedMs : Infinity
+      // Reset stale running state if server restarted (!hasInMemoryJob and >3s old) or if no heartbeat for >60s
+      if ((!hasInMemoryJob && ageMs > 3000) || ageMs > 60000) {
+        chat.isAgentRunning = false
+        chat.activity = 'idle'
+        chat.updatedAt = new Date().toISOString()
+        saveChat(user.email, chat)
+      }
+    }
+
     return NextResponse.json({
       id: chat.id,
       title: chat.title,
       messages: chat.messages,
       isAgentRunning: Boolean(chat.isAgentRunning),
+      activity: chat.activity || 'idle',
+      runStatus: chat.runStatus || null,
+      updatedAt: chat.updatedAt,
     })
   } catch (err: any) {
     if (isAuthError(err)) {

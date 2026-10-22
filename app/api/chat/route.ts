@@ -13,8 +13,16 @@ import { formatSkillsCatalogPrompt } from '@/lib/agent/skills/loader'
 import { cleanAssistantContent } from '@/lib/agent/llm/toolcall-text'
 import fs from 'node:fs'
 
-// In-memory registry for background running jobs
-const activeAgentJobs = new Map<string, { cancel: boolean; startedAt: number; abortController?: AbortController }>()
+// In-memory registry for background running jobs (shared via globalThis across route handlers)
+const globalForJobs = globalThis as unknown as {
+  __superchatActiveAgentJobs?: Map<string, { cancel: boolean; startedAt: number; abortController?: AbortController }>
+}
+const activeAgentJobs =
+  globalForJobs.__superchatActiveAgentJobs ||
+  (globalForJobs.__superchatActiveAgentJobs = new Map<
+    string,
+    { cancel: boolean; startedAt: number; abortController?: AbortController }
+  >())
 
 const KNOWN_TOOLS = new Set([
   'run_python',
@@ -205,6 +213,7 @@ export async function DELETE(request: NextRequest) {
       const chat = getChat(user.email, chatId)
       if (chat) {
         chat.isAgentRunning = false
+        chat.activity = 'idle'
         saveChat(user.email, chat)
       }
     }
@@ -240,6 +249,7 @@ export async function POST(request: NextRequest) {
       const chat = getChat(user.email, chatId)
       if (chat) {
         chat.isAgentRunning = false
+        chat.activity = 'idle'
         saveChat(user.email, chat)
       }
     }
@@ -405,6 +415,8 @@ export async function POST(request: NextRequest) {
   }
   chat.messages.push(assistantMsg)
   chat.isAgentRunning = sandboxActive
+  chat.activity = 'thinking'
+  chat.runStatus = { state: 'running' }
   chat.updatedAt = new Date().toISOString()
   saveChat(user.email, chat)
 
@@ -420,6 +432,9 @@ export async function POST(request: NextRequest) {
   if (useV2Engine) {
     let finalAssistantText = ''
     let recordedToolCalls: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }> = []
+    let finalRunStatus: { state: 'running' | 'completed' | 'failed'; code?: string; userMessage?: string; detail?: string } | null = {
+      state: 'running',
+    }
     let promptTokens = 0
     let completionTokens = 0
 
@@ -437,18 +452,30 @@ export async function POST(request: NextRequest) {
       maxTokens,
       sandboxActive,
       signal: abortController.signal,
-      onProgressSave: async (text, toolCalls) => {
+      onProgressSave: async (text, toolCalls, meta) => {
         finalAssistantText = text
-        recordedToolCalls = toolCalls
+        recordedToolCalls = [...toolCalls]
+        if (meta?.runStatus !== undefined) {
+          finalRunStatus = meta.runStatus
+        }
         const liveChat = getChat(user.email, chatId)
         if (liveChat) {
           const idx = liveChat.messages.findIndex((m) => m.id === assistantMsgId)
           if (idx !== -1) {
             liveChat.messages[idx].toolCalls = [...toolCalls]
             liveChat.messages[idx].content = cleanAssistantContent(text)
-            liveChat.updatedAt = new Date().toISOString()
-            saveChat(user.email, liveChat)
+            if (meta?.runStatus !== undefined) {
+              liveChat.messages[idx].runStatus = meta.runStatus
+            }
           }
+          if (meta?.activity) {
+            liveChat.activity = meta.activity
+          }
+          if (meta?.runStatus !== undefined) {
+            liveChat.runStatus = meta.runStatus
+          }
+          liveChat.updatedAt = new Date().toISOString()
+          saveChat(user.email, liveChat)
         }
       },
     })
@@ -459,6 +486,18 @@ export async function POST(request: NextRequest) {
           if (event.type === 'usage') {
             promptTokens = event.promptTokens
             completionTokens = event.completionTokens
+          } else if (event.type === 'file') {
+            const fileTag = `<file path="${event.path}">${event.title}</file>`
+            if (!finalAssistantText.includes(fileTag)) {
+              finalAssistantText += `\n${fileTag}`
+            }
+          } else if (event.type === 'error') {
+            finalRunStatus = {
+              state: 'failed',
+              code: event.code || 'LLM_ERROR',
+              userMessage: 'Proses gagal, coba lagi',
+              detail: event.message,
+            }
           }
           yield event
         }
@@ -468,13 +507,18 @@ export async function POST(request: NextRequest) {
           if (finalChat) {
             const idx = finalChat.messages.findIndex((m) => m.id === assistantMsgId)
             const cleaned = cleanAssistantContent(finalAssistantText)
+            const resolvedStatus =
+              finalRunStatus?.state === 'running' ? { state: 'completed' as const } : finalRunStatus
             if (idx !== -1) {
               finalChat.messages[idx].content = cleaned
               if (recordedToolCalls.length > 0) {
                 finalChat.messages[idx].toolCalls = [...recordedToolCalls]
               }
+              finalChat.messages[idx].runStatus = resolvedStatus
             }
             finalChat.isAgentRunning = false
+            finalChat.activity = 'idle'
+            finalChat.runStatus = resolvedStatus
             finalChat.updatedAt = new Date().toISOString()
             saveChat(user.email, finalChat)
           }

@@ -11,35 +11,53 @@ export function encodeSSEEvent(event: AgentEvent): string {
 }
 
 /**
- * Creates a ReadableStream formatted as Server-Sent Events
+ * Creates a ReadableStream formatted as Server-Sent Events.
+ * Decouples stream cancellation from the background generator loop.
  */
 export function createSSEEventStream(
   eventGenerator: AsyncGenerator<AgentEvent, void, unknown>,
   onClose?: () => void
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
+  let streamClosed = false
 
   return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const event of eventGenerator) {
-          const chunk = encodeSSEEvent(event)
-          controller.enqueue(encoder.encode(chunk))
-        }
-      } catch (err: any) {
-        const errorEvent: AgentEvent = {
-          type: 'error',
-          code: 'STREAM_ERROR',
-          message: err?.message || 'Agent SSE stream failure',
-          retryable: false,
-        }
-        controller.enqueue(encoder.encode(encodeSSEEvent(errorEvent)))
-      } finally {
-        onClose?.()
+    start(controller) {
+      const safeEnqueue = (chunk: string) => {
+        if (streamClosed || !chunk) return
         try {
-          controller.close()
-        } catch {}
+          controller.enqueue(encoder.encode(chunk))
+        } catch {
+          streamClosed = true
+        }
       }
+
+      ;(async () => {
+        try {
+          for await (const event of eventGenerator) {
+            safeEnqueue(encodeSSEEvent(event))
+          }
+        } catch (err: any) {
+          const errorEvent: AgentEvent = {
+            type: 'error',
+            code: 'STREAM_ERROR',
+            message: err?.message || 'Agent SSE stream failure',
+            retryable: false,
+          }
+          safeEnqueue(encodeSSEEvent(errorEvent))
+        } finally {
+          onClose?.()
+          if (!streamClosed) {
+            streamClosed = true
+            try {
+              controller.close()
+            } catch {}
+          }
+        }
+      })()
+    },
+    cancel() {
+      streamClosed = true
     },
   })
 }

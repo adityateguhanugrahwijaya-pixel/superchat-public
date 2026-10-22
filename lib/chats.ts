@@ -1,12 +1,22 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+export type RunStatus = {
+  state: 'running' | 'completed' | 'failed'
+  code?: string
+  userMessage?: string
+  detail?: string
+}
+
+export type ActivityState = 'thinking' | `tool:${string}` | 'idle'
+
 export type MessageItem = {
   id?: string
   role: 'user' | 'assistant' | 'system'
   content: string
   createdAt?: string
   toolCalls?: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>
+  runStatus?: RunStatus | null
 }
 
 export type ChatData = {
@@ -19,6 +29,8 @@ export type ChatData = {
   updatedAt: string
   messages: MessageItem[]
   isAgentRunning?: boolean
+  activity?: ActivityState
+  runStatus?: RunStatus | null
 }
 
 export function getUserChatDir(userEmail: string): string {

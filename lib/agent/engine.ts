@@ -8,6 +8,16 @@ import { getModelCapabilities, saveCachedCapabilities, ModelCapabilities } from 
 import { executeSandboxTool } from '../sandbox/executor'
 import { resolveSandboxPath } from '../sandbox/paths'
 
+export interface AgentProgressMeta {
+  activity?: 'thinking' | `tool:${string}` | 'idle'
+  runStatus?: {
+    state: 'running' | 'completed' | 'failed'
+    code?: string
+    userMessage?: string
+    detail?: string
+  } | null
+}
+
 export interface RunAgentOptions {
   userEmail: string
   chatId: string
@@ -28,7 +38,8 @@ export interface RunAgentOptions {
   capabilities?: ModelCapabilities
   onProgressSave?: (
     fullAssistantText: string,
-    toolCalls: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>
+    toolCalls: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>,
+    meta?: AgentProgressMeta
   ) => Promise<void>
 }
 
@@ -74,6 +85,8 @@ export async function* runAgent(
 
   let doneReason: 'completed' | 'max_turns' | 'max_tool_calls' | 'wall_clock' | 'cancelled' | 'llm_error' =
     'completed'
+  let fatalErrorCode: string | undefined
+  let fatalErrorDetail: string | undefined
 
   let caps: ModelCapabilities = options.capabilities || {
     toolMode: 'text',
@@ -98,16 +111,27 @@ export async function* runAgent(
 
       if (Date.now() - startTime > wallClockMs) {
         doneReason = 'wall_clock'
+        fatalErrorCode = 'WALL_CLOCK'
+        fatalErrorDetail = 'Batas waktu eksekusi tercapai'
         break
       }
 
       if (totalToolCalls >= maxToolCalls) {
         doneReason = 'max_tool_calls'
+        fatalErrorCode = 'MAX_TOOL_CALLS'
+        fatalErrorDetail = 'Batas jumlah pemanggilan tool tercapai'
         break
       }
 
       turn++
       yield { type: 'turn-start', turn }
+
+      if (onProgressSave) {
+        await onProgressSave(fullAssistantText, recordedToolCalls, {
+          activity: 'thinking',
+          runStatus: { state: 'running' },
+        }).catch(() => {})
+      }
 
       const toolFilter = createToolCallFilter()
       let turnText = ''
@@ -200,13 +224,19 @@ export async function* runAgent(
               doneReason = 'cancelled'
             } else {
               doneReason = 'llm_error'
-              yield { type: 'error', code: 'LLM_ERROR', message: retryErr?.message || 'LLM error', retryable: false }
+              fatalErrorCode = 'LLM_ERROR'
+              fatalErrorDetail = retryErr?.message || 'LLM error'
+              console.error('[Agent LLM Error]', fatalErrorDetail)
+              yield { type: 'error', code: 'LLM_ERROR', message: 'Proses gagal, coba lagi', retryable: true }
             }
             break
           }
         } else {
           doneReason = 'llm_error'
-          yield { type: 'error', code: 'LLM_ERROR', message: err?.message || 'LLM error', retryable: false }
+          fatalErrorCode = 'LLM_ERROR'
+          fatalErrorDetail = err?.message || 'LLM error'
+          console.error('[Agent LLM Error]', fatalErrorDetail)
+          yield { type: 'error', code: 'LLM_ERROR', message: 'Proses gagal, coba lagi', retryable: true }
           break
         }
       }
@@ -218,7 +248,10 @@ export async function* runAgent(
 
       // Save interim progress after tokens received
       if (onProgressSave) {
-        await onProgressSave(fullAssistantText, recordedToolCalls).catch(() => {})
+        await onProgressSave(fullAssistantText, recordedToolCalls, {
+          activity: 'thinking',
+          runStatus: { state: 'running' },
+        }).catch(() => {})
       }
 
       // Parse tool calls in this turn: native tools + text tool fallback
@@ -288,6 +321,19 @@ export async function* runAgent(
           totalToolCalls++
           executedToolsThisTurn++
 
+          recordedToolCalls.push({
+            toolName,
+            status: 'running',
+          })
+          const callIdx = recordedToolCalls.length - 1
+
+          if (onProgressSave) {
+            await onProgressSave(fullAssistantText, recordedToolCalls, {
+              activity: `tool:${toolName}`,
+              runStatus: { state: 'running' },
+            }).catch(() => {})
+          }
+
           yield { type: 'tool-call', id: toolId, name: toolName, args: params }
 
           const toolStart = Date.now()
@@ -297,11 +343,11 @@ export async function* runAgent(
           const status = toolResult.success ? 'success' : 'failed'
           const outputSnippet = (toolResult.output || toolResult.error || 'Command executed successfully.').trim()
 
-          recordedToolCalls.push({
+          recordedToolCalls[callIdx] = {
             toolName,
             status,
             output: outputSnippet.slice(0, 4000),
-          })
+          }
 
           if (toolResult.requiresApproval) {
             yield {
@@ -339,7 +385,10 @@ export async function* runAgent(
 
           // Invalidate/save progress with toolCall
           if (onProgressSave) {
-            await onProgressSave(fullAssistantText, recordedToolCalls).catch(() => {})
+            await onProgressSave(fullAssistantText, recordedToolCalls, {
+              activity: 'thinking',
+              runStatus: { state: 'running' },
+            }).catch(() => {})
           }
 
           // Append feedback message for this tool call to context
@@ -416,14 +465,40 @@ export async function* runAgent(
 
     if (turn >= maxTurns && doneReason === 'completed') {
       doneReason = 'max_turns'
+      fatalErrorCode = 'MAX_TURNS'
+      fatalErrorDetail = 'Batas giliran eksekusi tercapai'
     }
 
-    if (sandboxActive && totalToolCalls > 0 && fullAssistantText.trim().length === 0 && doneReason !== 'cancelled') {
+    if (sandboxActive && totalToolCalls > 0 && fullAssistantText.trim().length === 0 && doneReason === 'completed') {
       const fallbackSummary = 'Completed requested operations.'
       fullAssistantText += fallbackSummary
       yield { type: 'text-delta', text: fallbackSummary }
     }
   } finally {
+    if (onProgressSave) {
+      const isFailed =
+        doneReason === 'llm_error' ||
+        doneReason === 'max_turns' ||
+        doneReason === 'max_tool_calls' ||
+        doneReason === 'wall_clock'
+
+      const finalRunStatus = isFailed
+        ? {
+            state: 'failed' as const,
+            code: fatalErrorCode || doneReason.toUpperCase(),
+            userMessage: 'Proses gagal, coba lagi',
+            detail: fatalErrorDetail || `Run stopped: ${doneReason}`,
+          }
+        : {
+            state: 'completed' as const,
+          }
+
+      await onProgressSave(fullAssistantText, recordedToolCalls, {
+        activity: 'idle',
+        runStatus: finalRunStatus,
+      }).catch(() => {})
+    }
+
     yield { type: 'done', reason: doneReason }
   }
 }
