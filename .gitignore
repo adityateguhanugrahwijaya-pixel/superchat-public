@@ -17,8 +17,8 @@ appconfig.json
 !appconfig.json.example
 
 # Data & local stores
-chats/
-sandbox/
+/chats/
+/sandbox/
 local.db
 local.db-shm
 local.db-wal

@@ -80,7 +80,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Missing chatId or path parameter' }, { status: 400 })
     }
 
-    const fullPath = resolveSandboxPath(user.email, chatId, filePath)
+    let fullPath: string
+    try {
+      fullPath = resolveSandboxPath(user.email, chatId, filePath, {
+        allowFallback: true,
+        forWrite: false,
+        allowInternalAgent: false,
+      })
+    } catch (err: any) {
+      return NextResponse.json({ error: err?.message || 'Access denied' }, { status: 403 })
+    }
 
     if (!fs.existsSync(fullPath)) {
       return NextResponse.json({ error: `File not found: ${filePath}` }, { status: 404 })
