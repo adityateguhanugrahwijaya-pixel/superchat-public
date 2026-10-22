@@ -6,6 +6,7 @@ import { ExecOptions, ExecResult, SandboxDriver } from './driver'
 import { getSessionDir, getSkillsDir } from './paths'
 import { applyVenvToEnv } from './runtime'
 import { destroySession } from './janitor'
+import { getNetworkEnv } from './network'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024 // 2 MB per stream cap
@@ -65,6 +66,14 @@ export function buildSandboxEnv(sessionRoot: string, customEnv?: Record<string, 
 
   // Apply Python sandbox virtual environment if available
   const env = applyVenvToEnv(baseEnv)
+
+  // Apply network policy (e.g. SANDBOX_NETWORK=off or proxy)
+  const netEnv = getNetworkEnv()
+  for (const [k, v] of Object.entries(netEnv)) {
+    if (typeof v === 'string') {
+      env[k] = v
+    }
+  }
 
   if (customEnv) {
     for (const [k, v] of Object.entries(customEnv)) {
