@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser, isAuthError } from '@/lib/session'
 import { resolveSandboxPath, isUserSandboxEnabled } from '@/lib/sandbox'
+import { detectMimeType } from '@/lib/agent/uploads'
 import fs from 'node:fs'
 import path from 'node:path'
 import * as XLSX from 'xlsx'
@@ -35,8 +36,8 @@ const MIME_TYPES: Record<string, string> = {
   '.zip': 'application/zip',
 }
 
-function getMimeType(filePath: string): string {
-  return MIME_TYPES[path.extname(filePath).toLowerCase()] || 'text/plain; charset=utf-8'
+function getMimeType(filePath: string, sampleBuffer?: Buffer): string {
+  return detectMimeType(filePath, sampleBuffer)
 }
 
 /** Content-Disposition with a safe ASCII fallback plus the real UTF-8 name (RFC 5987). */
@@ -102,7 +103,14 @@ export async function GET(request: NextRequest) {
 
     const filename = path.basename(fullPath)
     const ext = path.extname(fullPath).toLowerCase()
-    const mimeType = getMimeType(fullPath)
+    const sampleHeader = Buffer.alloc(32)
+    let headerBytes = 0
+    try {
+      const fd = fs.openSync(fullPath, 'r')
+      headerBytes = fs.readSync(fd, sampleHeader, 0, 32, 0)
+      fs.closeSync(fd)
+    } catch {}
+    const mimeType = getMimeType(fullPath, sampleHeader.subarray(0, headerBytes))
 
     // If parse requested, ALWAYS return a valid JSON response
     if (isParse) {

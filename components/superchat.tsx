@@ -647,6 +647,11 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
+
+    const isText =
+      file.type.startsWith('text/') ||
+      /\.(txt|md|csv|json|js|ts|jsx|tsx|py|html|css|xml|yaml|yml|sql|sh|env)$/i.test(file.name)
+
     const reader = new FileReader()
     reader.onload = (e) => {
       const content = String(e.target?.result || '')
@@ -656,7 +661,11 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
         size: file.size,
       })
     }
-    reader.readAsText(file)
+    if (isText) {
+      reader.readAsText(file)
+    } else {
+      reader.readAsDataURL(file)
+    }
   }
 
   function handleNewConversation() {

@@ -200,15 +200,21 @@ export function resolveSandboxPath(
     throw new Error(`Security Violation: Access to internal .agent directory is forbidden`)
   }
 
-  // 4. Fallback jika membaca file yang ada di root dengan nama yang sama
+  // 4. Fallback jika membaca file: cek root, outputs/, uploads/
   if (allowFallback && !forWrite && !fs.existsSync(resolved)) {
     const filename = path.basename(normalized)
     if (filename && filename !== '.' && filename !== '..') {
-      const fallbackPath = path.join(sessionRoot, filename)
-      if (fs.existsSync(fallbackPath)) {
-        const { realpath: fbReal } = findExistingAncestorRealpath(fallbackPath)
-        if (isPathInside(realSessionRoot, fbReal)) {
-          return fallbackPath
+      const candidates = [
+        path.join(sessionRoot, filename),
+        path.join(sessionRoot, 'outputs', filename),
+        path.join(sessionRoot, 'uploads', filename),
+      ]
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+          const { realpath: fbReal } = findExistingAncestorRealpath(candidate)
+          if (isPathInside(realSessionRoot, fbReal)) {
+            return candidate
+          }
         }
       }
     }
