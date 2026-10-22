@@ -11,53 +11,172 @@ export type ToolExecutionResult = {
   fileTitle?: string
 }
 
-function snapshotSandboxFiles(sandboxDir: string): Map<string, number> {
-  const fileMap = new Map<string, number>()
-  try {
-    const listFiles = (dir: string) => {
-      const items = fs.readdirSync(dir, { withFileTypes: true })
-      for (const item of items) {
-        if (item.name.startsWith('_temp_')) continue
-        const full = path.join(dir, item.name)
-        if (item.isDirectory()) {
-          listFiles(full)
-        } else if (item.isFile()) {
-          const rel = path.relative(sandboxDir, full)
-          try {
-            fileMap.set(rel, fs.statSync(full).mtimeMs)
-          } catch {}
-        }
-      }
+// ---------------------------------------------------------------------------
+// Limits (tweak these if you need more room)
+// ---------------------------------------------------------------------------
+const SCRIPT_TIMEOUT_MS = 120_000 // python / node scripts (was 45s)
+const COMMAND_TIMEOUT_MS = 120_000 // shell commands (was 60s)
+const MAX_BUFFER_BYTES = 50 * 1024 * 1024 // stdout+stderr cap per stream (Node default is only 1 MB)
+const MAX_OUTPUT_CHARS = 200_000 // cap on what is sent back to the model
+
+/**
+ * Optional: set PYTHON_BIN in .env.local to use a specific interpreter,
+ * e.g. the Python from your cloned conda env / venv:
+ *   PYTHON_BIN=/home/me/miniconda3/envs/new_env/bin/python
+ *   PYTHON_BIN=C:\Users\me\venvs\new_env\Scripts\python.exe
+ */
+function getPythonBin(): string {
+  const custom = process.env.PYTHON_BIN?.trim()
+  if (custom) return custom
+  return process.platform === 'win32' ? 'python' : 'python3'
+}
+
+// ---------------------------------------------------------------------------
+// File snapshot helpers
+// ---------------------------------------------------------------------------
+type FileStamp = { mtimeMs: number; size: number }
+
+function snapshotSandboxFiles(sandboxDir: string): Map<string, FileStamp> {
+  const fileMap = new Map<string, FileStamp>()
+  const walk = (dir: string) => {
+    let items: fs.Dirent[]
+    try {
+      items = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
     }
-    listFiles(sandboxDir)
-  } catch {}
+    for (const item of items) {
+      if (item.name.startsWith('_temp_')) continue
+      const full = path.join(dir, item.name)
+      try {
+        // statSync follows symlinks, so symlinked files/dirs are handled too
+        const st = fs.statSync(full)
+        if (st.isDirectory()) {
+          if (item.name === 'node_modules' || item.name === '__pycache__' || item.name === '.git') continue
+          walk(full)
+        } else if (st.isFile()) {
+          fileMap.set(path.relative(sandboxDir, full), { mtimeMs: st.mtimeMs, size: st.size })
+        }
+      } catch {}
+    }
+  }
+  walk(sandboxDir)
   return fileMap
 }
 
-function detectNewOrModifiedFiles(sandboxDir: string, beforeMap: Map<string, number>): string[] {
+function detectNewOrModifiedFiles(sandboxDir: string, before: Map<string, FileStamp>): string[] {
+  const after = snapshotSandboxFiles(sandboxDir)
   const result: string[] = []
-  try {
-    const listFiles = (dir: string) => {
-      const items = fs.readdirSync(dir, { withFileTypes: true })
-      for (const item of items) {
-        if (item.name.startsWith('_temp_')) continue
-        const full = path.join(dir, item.name)
-        if (item.isDirectory()) {
-          listFiles(full)
-        } else if (item.isFile()) {
-          const rel = path.relative(sandboxDir, full)
-          try {
-            const mtime = fs.statSync(full).mtimeMs
-            if (!beforeMap.has(rel) || beforeMap.get(rel) !== mtime) {
-              result.push(rel)
-            }
-          } catch {}
-        }
-      }
+  for (const [rel, stamp] of after) {
+    const prev = before.get(rel)
+    if (!prev || prev.mtimeMs !== stamp.mtimeMs || prev.size !== stamp.size) {
+      result.push(rel)
     }
-    listFiles(sandboxDir)
-  } catch {}
+  }
   return result
+}
+
+// ---------------------------------------------------------------------------
+// Small utilities
+// ---------------------------------------------------------------------------
+function pickParam(params: Record<string, any>, keys: string[]): string {
+  for (const key of keys) {
+    const v = params[key]
+    if (typeof v === 'string' && v.trim()) return v
+  }
+  return ''
+}
+
+/** Removes ```python ... ``` fences if the model wrapped the code in markdown. */
+function stripCodeFences(code: string): string {
+  const match = code.trim().match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n?```\s*$/)
+  return match ? match[1] : code
+}
+
+/** Keeps the start and end of very long output so nothing important (like a traceback) is lost. */
+function clipOutput(text: string): string {
+  if (text.length <= MAX_OUTPUT_CHARS) return text
+  const half = Math.floor(MAX_OUTPUT_CHARS / 2)
+  const omitted = text.length - MAX_OUTPUT_CHARS
+  return `${text.slice(0, half)}\n\n... [${omitted} characters omitted] ...\n\n${text.slice(-half)}`
+}
+
+function filesSection(createdFiles: string[]): string {
+  return createdFiles.length > 0
+    ? `\n\n📁 **Workspace Files Created/Updated:**\n` + createdFiles.map((f) => `- ${f}`).join('\n')
+    : ''
+}
+
+function describeExecError(err: any): string {
+  if (err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+    return '\n\n📦 Output exceeded the buffer limit, so it was cut off. Print less, or write the results to a file.'
+  }
+  if (err?.killed && (err?.signal === 'SIGTERM' || err?.signal === 'SIGKILL')) {
+    return `\n\n⏱️ The process was killed after hitting the ${Math.round(SCRIPT_TIMEOUT_MS / 1000)}s time limit. Make the script faster or split the work into steps.`
+  }
+  if (err?.code === 127) {
+    return '\n\n🔎 Command not found. If this is Python, set PYTHON_BIN in .env.local to the full path of your interpreter.'
+  }
+  return ''
+}
+
+/**
+ * Runs a script file with the given command, then reports output + files.
+ * Shared by run_python and run_node.
+ */
+function runScript(opts: {
+  command: string
+  tempFile: string
+  sandboxDir: string
+  label: 'Python' | 'Node.js'
+  env: NodeJS.ProcessEnv
+  missingModuleHelp: (output: string) => string
+}): Promise<ToolExecutionResult> {
+  const { command, tempFile, sandboxDir, label, env, missingModuleHelp } = opts
+  const beforeFiles = snapshotSandboxFiles(sandboxDir)
+
+  return new Promise((resolve) => {
+    exec(
+      command,
+      { cwd: sandboxDir, timeout: SCRIPT_TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES, env },
+      (err, stdout, stderr) => {
+        try { fs.unlinkSync(tempFile) } catch {}
+
+        const createdFiles = detectNewOrModifiedFiles(sandboxDir, beforeFiles)
+        const combinedOutput = [stdout, stderr].filter(Boolean).join('\n').trim()
+
+        // Trust the real exit status. The old version scanned the text for words like
+        // "TypeError:" which marked healthy scripts as failed.
+        if (err) {
+          const errorText = stderr || stdout || err.message || `${label} execution failed`
+          const body = combinedOutput || err.message || 'Script exited with error'
+          resolve({
+            success: false,
+            output: clipOutput(
+              `❌ ${label} Script Failed:\n${body}${describeExecError(err)}${missingModuleHelp(combinedOutput)}`
+            ),
+            error: errorText,
+            filePath: createdFiles[0] || undefined,
+            fileTitle: createdFiles[0] ? path.basename(createdFiles[0]) : undefined,
+          })
+          return
+        }
+
+        let outMsg = combinedOutput || `${label} script ran successfully but printed nothing.`
+        outMsg += filesSection(createdFiles)
+        if (createdFiles.length === 0) {
+          outMsg += `\n\n⚠️ **Notice:** No new or changed files in the workspace. If you expected a file, make sure the script saves it (e.g. \`df.to_csv('out.csv')\`, \`plt.savefig('chart.png')\`) using a relative path.`
+        }
+
+        resolve({
+          success: true,
+          output: clipOutput(outMsg),
+          filePath: createdFiles[0] || undefined,
+          fileTitle: createdFiles[0] ? path.basename(createdFiles[0]) : undefined,
+        })
+      }
+    )
+  })
 }
 
 /**
@@ -72,6 +191,9 @@ export async function executeSandboxTool(
   const sandboxDir = getSandboxDir(userEmail, chatId)
 
   try {
+    // Make sure the sandbox folder exists before any tool touches it
+    fs.mkdirSync(sandboxDir, { recursive: true })
+
     switch (toolName) {
       case 'read_file': {
         const filePath = String(
@@ -126,7 +248,7 @@ export async function executeSandboxTool(
         const relPath = path.relative(sandboxDir, fullPath)
         return {
           success: true,
-          output: `Successfully written ${content.length} bytes to ${relPath}`,
+          output: `Successfully written ${Buffer.byteLength(content, 'utf-8')} bytes to ${relPath}`,
           filePath: relPath,
           fileTitle: path.basename(relPath),
         }
@@ -244,144 +366,84 @@ export async function executeSandboxTool(
       }
 
       case 'run_python': {
-        let code = String(params.code || params.script || params.python || params.content || '')
+        // Accept the code under many different parameter names
+        let code = pickParam(params, [
+          'code', 'script', 'python', 'content', 'source', 'source_code', 'sourceCode',
+          'python_code', 'pythonCode', 'script_content', 'program', 'input', 'text', 'command',
+        ])
+        code = stripCodeFences(code)
 
-        // Intercept hardcoded absolute paths commonly used by LLMs (e.g. /mnt/data/ -> ./)
-        code = code
-          .replace(/(['"])(\/mnt\/data\/|\/tmp\/|\/var\/tmp\/|\/root\/)/gi, '$1./')
-          .replace(/(open\s*\(\s*['"])\/mnt\/data\//gi, '$1./')
-          .replace(/(open\s*\(\s*['"])\/tmp\//gi, '$1./')
+        // Guard: an empty script "runs successfully" and produces nothing, which is very confusing
+        if (!code.trim()) {
+          return {
+            success: false,
+            output: `Error: run_python received no code. Parameter keys received: [${Object.keys(params).join(', ')}]. Send the Python source in the "code" parameter.`,
+            error: 'Empty code',
+          }
+        }
 
-        const tempFile = path.join(sandboxDir, `_temp_${Date.now()}.py`)
+        // Redirect absolute paths LLMs like to use (/mnt/data, /tmp, ...) into the sandbox.
+        // Handles both "/tmp/file.csv" and a bare "/tmp".
+        code = code.replace(
+          /(['"])\/(?:mnt\/user-data\/outputs|mnt\/user-data|mnt\/data|var\/tmp|tmp|root|workspace|home\/claude)(?=[\/'"])/gi,
+          '$1.'
+        )
+
+        const tempFile = path.join(sandboxDir, `_temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.py`)
         fs.writeFileSync(tempFile, code, 'utf-8')
 
-        const beforeFiles = snapshotSandboxFiles(sandboxDir)
-
-        return new Promise((resolve) => {
-          const pyCmd = process.platform === 'win32' ? `python "${tempFile}"` : `python3 "${tempFile}"`
-          exec(
-            pyCmd,
-            {
-              cwd: sandboxDir,
-              timeout: 45000,
-              env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
-            },
-            (err, stdout, stderr) => {
-              try { fs.unlinkSync(tempFile) } catch {}
-
-              const createdFiles = detectNewOrModifiedFiles(sandboxDir, beforeFiles)
-              const combinedOutput = [stdout, stderr].filter(Boolean).join('\n').trim()
-
-              // Detect errors even if exit code was 0
-              const hasPythonError =
-                Boolean(err) ||
-                /Traceback \(most recent call last\):/i.test(combinedOutput) ||
-                /ModuleNotFoundError:/i.test(combinedOutput) ||
-                /ImportError:/i.test(combinedOutput) ||
-                /SyntaxError:/i.test(combinedOutput) ||
-                /NameError:/i.test(combinedOutput) ||
-                /TypeError:/i.test(combinedOutput) ||
-                /AttributeError:/i.test(combinedOutput) ||
-                /FileNotFoundError:/i.test(combinedOutput) ||
-                /Failed to (?:save|create|generate|write)/i.test(combinedOutput)
-
-              if (hasPythonError) {
-                const errorText = stderr || stdout || err?.message || 'Python execution failed'
-                let errHelp = ''
-                if (/ModuleNotFoundError:\s*No module named ['"]([^'"]+)['"]/i.test(combinedOutput)) {
-                  const missingMod = combinedOutput.match(/ModuleNotFoundError:\s*No module named ['"]([^'"]+)['"]/i)?.[1]
-                  if (missingMod) {
-                    errHelp = `\n\n💡 **Action Required:** Missing Python package '${missingMod}'. Use execute_command tool: {"command": "pip install ${missingMod}"} to install it.`
-                  }
-                }
-                resolve({
-                  success: false,
-                  output: `❌ Python Script Failed:\n${combinedOutput || 'Script exited with error'}${errHelp}`,
-                  error: errorText,
-                })
-              } else {
-                let outMsg = combinedOutput || 'Python script executed successfully.'
-                if (createdFiles.length > 0) {
-                  outMsg += `\n\n📁 **Workspace Files Created/Updated:**\n` + createdFiles.map((f) => `- ${f}`).join('\n')
-                } else {
-                  outMsg += `\n\n⚠️ **Notice:** No new output files were created in the workspace. If you intended to generate a file (e.g. PDF/CSV/PNG), ensure your script opens and writes to disk (e.g. \`with open('filename.ext', 'wb') as f: ...\`).`
-                }
-                resolve({
-                  success: true,
-                  output: outMsg,
-                  filePath: createdFiles[0] || undefined,
-                  fileTitle: createdFiles[0] ? path.basename(createdFiles[0]) : undefined,
-                })
-              }
-            }
-          )
+        const pyBin = getPythonBin()
+        return runScript({
+          command: `"${pyBin}" "${tempFile}"`,
+          tempFile,
+          sandboxDir,
+          label: 'Python',
+          env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', MPLBACKEND: 'Agg' },
+          missingModuleHelp: (output) => {
+            const missingMod = output.match(/ModuleNotFoundError:\s*No module named ['"]([^'"]+)['"]/i)?.[1]
+            if (!missingMod) return ''
+            const pkg = missingMod.split('.')[0]
+            return `\n\n💡 **Action Required:** Missing Python package '${pkg}'. Use execute_command tool: {"command": "\\"${pyBin}\\" -m pip install ${pkg}"} to install it into the same Python that runs your scripts.`
+          },
         })
       }
 
       case 'run_node': {
-        const code = String(params.code || params.script || '')
-        const tempFile = path.join(sandboxDir, `_temp_${Date.now()}.js`)
+        const code = stripCodeFences(pickParam(params, ['code', 'script', 'source', 'content', 'javascript', 'js', 'input']))
+
+        if (!code.trim()) {
+          return {
+            success: false,
+            output: `Error: run_node received no code. Parameter keys received: [${Object.keys(params).join(', ')}]. Send the JavaScript source in the "code" parameter.`,
+            error: 'Empty code',
+          }
+        }
+
+        const tempFile = path.join(sandboxDir, `_temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.js`)
         fs.writeFileSync(tempFile, code, 'utf-8')
 
-        const beforeFiles = snapshotSandboxFiles(sandboxDir)
-
-        return new Promise((resolve) => {
-          exec(
-            `node "${tempFile}"`,
-            {
-              cwd: sandboxDir,
-              timeout: 45000,
-              env: { ...process.env, NODE_ENV: 'development' },
-            },
-            (err, stdout, stderr) => {
-              try { fs.unlinkSync(tempFile) } catch {}
-
-              const createdFiles = detectNewOrModifiedFiles(sandboxDir, beforeFiles)
-              const combinedOutput = [stdout, stderr].filter(Boolean).join('\n').trim()
-
-              const hasNodeError =
-                Boolean(err) ||
-                /Error:\s*Cannot find module/i.test(combinedOutput) ||
-                /SyntaxError:/i.test(combinedOutput) ||
-                /ReferenceError:/i.test(combinedOutput) ||
-                /TypeError:/i.test(combinedOutput)
-
-              if (hasNodeError) {
-                const errorText = stderr || stdout || err?.message || 'Node.js execution error'
-                let errHelp = ''
-                if (/Cannot find module ['"]([^'"]+)['"]/i.test(combinedOutput)) {
-                  const missingMod = combinedOutput.match(/Cannot find module ['"]([^'"]+)['"]/i)?.[1]
-                  if (missingMod) {
-                    errHelp = `\n\n💡 **Action Required:** Missing Node.js package '${missingMod}'. Use execute_command tool: {"command": "npm install ${missingMod}"} to install it.`
-                  }
-                }
-                resolve({
-                  success: false,
-                  output: `❌ Node.js Script Failed:\n${combinedOutput || 'Script exited with error'}${errHelp}`,
-                  error: errorText,
-                })
-              } else {
-                let outMsg = combinedOutput || 'Node.js script executed successfully.'
-                if (createdFiles.length > 0) {
-                  outMsg += `\n\n📁 **Workspace Files Created/Updated:**\n` + createdFiles.map((f) => `- ${f}`).join('\n')
-                } else {
-                  outMsg += `\n\n⚠️ **Notice:** No new output files were created in the workspace. If you intended to generate a file, ensure your script writes to disk.`
-                }
-                resolve({
-                  success: true,
-                  output: outMsg,
-                  filePath: createdFiles[0] || undefined,
-                  fileTitle: createdFiles[0] ? path.basename(createdFiles[0]) : undefined,
-                })
-              }
-            }
-          )
+        return runScript({
+          command: `node "${tempFile}"`,
+          tempFile,
+          sandboxDir,
+          label: 'Node.js',
+          env: { ...process.env, NODE_ENV: 'development' },
+          missingModuleHelp: (output) => {
+            const missingMod = output.match(/Cannot find module ['"]([^'"]+)['"]/i)?.[1]
+            return missingMod
+              ? `\n\n💡 **Action Required:** Missing Node.js package '${missingMod}'. Use execute_command tool: {"command": "npm install ${missingMod}"} to install it.`
+              : ''
+          },
         })
       }
 
       case 'execute_command':
       case 'run_shell': {
         const command = String(params.command || params.cmd || '').trim()
+        if (!command) {
+          return { success: false, output: 'Error: command parameter is required.', error: 'Empty command' }
+        }
+
         const { assessToolSafety } = require('./safety')
         const safety = assessToolSafety(toolName, params)
         if (safety.blocked) {
@@ -395,29 +457,38 @@ export async function executeSandboxTool(
         const beforeFiles = snapshotSandboxFiles(sandboxDir)
 
         return new Promise((resolve) => {
-          exec(command, { cwd: sandboxDir, timeout: 60000 }, (err, stdout, stderr) => {
-            const createdFiles = detectNewOrModifiedFiles(sandboxDir, beforeFiles)
-            const combined = `${stdout}\n${stderr}`.trim()
+          exec(
+            command,
+            { cwd: sandboxDir, timeout: COMMAND_TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES },
+            (err, stdout, stderr) => {
+              const createdFiles = detectNewOrModifiedFiles(sandboxDir, beforeFiles)
+              const combined = [stdout, stderr].filter(Boolean).join('\n').trim()
 
-            if (err) {
-              resolve({
-                success: false,
-                output: combined ? `❌ Command Failed:\n${combined}` : `❌ Command Error: ${err.message}`,
-                error: err.message,
-              })
-            } else {
-              let outMsg = combined || 'Command executed successfully.'
-              if (createdFiles.length > 0) {
-                outMsg += `\n\n📁 **Workspace Files Created/Updated:**\n` + createdFiles.map((f) => `- ${f}`).join('\n')
+              if (err) {
+                const e = err as any
+                let reason = ''
+                if (e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+                  reason = '\n\n📦 Output exceeded the buffer limit and was cut off.'
+                } else if (e.killed) {
+                  reason = `\n\n⏱️ Command was killed after hitting the ${Math.round(COMMAND_TIMEOUT_MS / 1000)}s time limit.`
+                }
+                resolve({
+                  success: false,
+                  output: clipOutput(
+                    combined ? `❌ Command Failed:\n${combined}${reason}` : `❌ Command Error: ${err.message}${reason}`
+                  ),
+                  error: err.message,
+                })
+              } else {
+                resolve({
+                  success: true,
+                  output: clipOutput((combined || 'Command executed successfully.') + filesSection(createdFiles)),
+                  filePath: createdFiles[0] || undefined,
+                  fileTitle: createdFiles[0] ? path.basename(createdFiles[0]) : undefined,
+                })
               }
-              resolve({
-                success: true,
-                output: outMsg,
-                filePath: createdFiles[0] || undefined,
-                fileTitle: createdFiles[0] ? path.basename(createdFiles[0]) : undefined,
-              })
             }
-          })
+          )
         })
       }
 
@@ -425,6 +496,7 @@ export async function executeSandboxTool(
         return { success: false, output: `Unknown tool: ${toolName}` }
     }
   } catch (err: any) {
-    return { success: false, output: '', error: err.message || 'Execution error' }
+    const message = err?.message || 'Execution error'
+    return { success: false, output: `Execution error: ${message}`, error: message }
   }
 }
