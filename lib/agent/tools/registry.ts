@@ -67,7 +67,8 @@ class ToolRegistry {
     chatId: string,
     toolName: string,
     rawArgs: any,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    approved?: boolean
   ): Promise<ToolResult> {
     const tool = this.get(toolName)
     if (!tool) {
@@ -94,6 +95,7 @@ class ToolRegistry {
       chatId,
       sessionDir,
       signal,
+      approved,
     }
 
     try {

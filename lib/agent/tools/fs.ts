@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { ToolDefinition, ToolContext, ToolResult } from './types'
 import { resolveSandboxPath } from '../../sandbox/paths'
+import { assessToolSafety } from '../../sandbox/safety'
 import { clipOutput } from './helpers'
 
 // ---------------------------------------------------------------------------
@@ -376,6 +377,18 @@ export const deleteFileTool: ToolDefinition = {
         success: false,
         output: 'Security Violation: Cannot delete root or internal .agent directory.',
         error: 'Forbidden path',
+      }
+    }
+
+    // Safety: check approval before deleting
+    const safety = assessToolSafety('delete_file', { path: reqPath })
+    if (safety.requiresApproval && !context.approved) {
+      return {
+        success: false,
+        requiresApproval: true,
+        approvalReason: safety.reason,
+        output: safety.reason || `Destructive File Removal: User confirmation required to delete "${reqPath}".`,
+        error: safety.reason || 'User confirmation required.',
       }
     }
 

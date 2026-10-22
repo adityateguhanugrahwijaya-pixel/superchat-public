@@ -179,6 +179,15 @@ export async function* runAgent(
             output: outputSnippet.slice(0, 4000),
           })
 
+          if (toolResult.requiresApproval) {
+            yield {
+              type: 'approval-required',
+              toolName,
+              params: params,
+              reason: toolResult.approvalReason,
+            }
+          }
+
           yield {
             type: 'tool-result',
             id: toolId,

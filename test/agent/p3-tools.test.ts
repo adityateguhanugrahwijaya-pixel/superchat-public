@@ -179,12 +179,12 @@ test('P3.7: delete_file removes files and protects root and .agent', async () =>
   const dir = setupTestDir()
   try {
     fs.writeFileSync(path.join(dir, 'temp.txt'), 'remove me', 'utf-8')
-    const delRes = await executeTool(TEST_EMAIL, TEST_CHAT_ID, 'delete_file', { path: 'temp.txt' })
+    const delRes = await executeTool(TEST_EMAIL, TEST_CHAT_ID, 'delete_file', { path: 'temp.txt' }, undefined, true)
     assert.equal(delRes.success, true)
     assert.ok(!fs.existsSync(path.join(dir, 'temp.txt')))
 
     // Try deleting root session dir
-    const rootDel = await executeTool(TEST_EMAIL, TEST_CHAT_ID, 'delete_file', { path: '.' })
+    const rootDel = await executeTool(TEST_EMAIL, TEST_CHAT_ID, 'delete_file', { path: '.' }, undefined, true)
     assert.equal(rootDel.success, false)
   } finally {
     cleanupTestDir()

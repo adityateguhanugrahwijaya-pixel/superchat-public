@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Execute tool inside user's chat sandbox
-    const result = await executeSandboxTool(user.email, chatId, toolName, params || {})
+    const result = await executeSandboxTool(user.email, chatId, toolName, params || {}, undefined, Boolean(approved))
     return NextResponse.json(result)
   } catch (err: any) {
     if (isAuthError(err)) {
