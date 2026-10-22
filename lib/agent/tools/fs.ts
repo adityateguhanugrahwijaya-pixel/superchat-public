@@ -49,7 +49,7 @@ export const readFileTool: ToolDefinition = {
       }
     }
 
-    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath)
+    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath, { forWrite: false, allowFallback: true })
     if (!fs.existsSync(fullPath)) {
       return { success: false, output: `File not found: ${reqPath}`, error: 'File not found' }
     }
@@ -136,7 +136,7 @@ export const writeFileTool: ToolDefinition = {
       return { success: false, output: 'Error: path parameter is required for write_file.', error: 'Empty path' }
     }
 
-    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath, false)
+    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath, { forWrite: true, allowFallback: false })
 
     if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
       return {
@@ -209,7 +209,7 @@ export const editFileTool: ToolDefinition = {
       return { success: false, output: 'Error: path parameter is required for edit_file.', error: 'Empty path' }
     }
 
-    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath)
+    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath, { forWrite: true, allowFallback: false })
     if (!fs.existsSync(fullPath)) {
       return { success: false, output: `Error: File not found: ${reqPath}`, error: 'File not found' }
     }
@@ -298,7 +298,7 @@ export const listDirTool: ToolDefinition = {
     const reqPath = String(args.path || '.').trim()
     const maxDepth = Math.max(1, Math.min(5, Number(args.depth || 1)))
 
-    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath)
+    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath, { forWrite: false, allowFallback: false })
     if (!fs.existsSync(fullPath)) {
       return { success: false, output: `Directory not found: ${reqPath}`, error: 'Directory not found' }
     }
@@ -365,7 +365,7 @@ export const deleteFileTool: ToolDefinition = {
       return { success: false, output: 'Error: path parameter is required for delete_file.', error: 'Empty path' }
     }
 
-    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath, false)
+    const fullPath = resolveSandboxPath(userEmail, chatId, reqPath, { forWrite: true, allowFallback: false })
     if (!fs.existsSync(fullPath)) {
       return { success: false, output: `File not found: ${reqPath}`, error: 'File not found' }
     }

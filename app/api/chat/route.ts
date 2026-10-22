@@ -7,6 +7,7 @@ import { isSandboxEnabled, isUserSandboxEnabled, resolveSandboxPath } from '@/li
 import { executeSandboxTool } from '@/lib/sandbox/executor'
 import { runAgent } from '@/lib/agent/engine'
 import { createLegacyEventStream } from '@/lib/agent/stream/legacy'
+import { processUserAttachments } from '@/lib/agent/uploads'
 import fs from 'node:fs'
 
 // In-memory registry for background running jobs
@@ -380,15 +381,19 @@ export async function POST(request: NextRequest) {
 
   const systemMessage = capabilityPrompts.map((text) => ({ role: 'system', content: text }))
 
+  // Intercept user attachments, save to sandbox uploads/ and generate metadata
+  const { processedContent } = processUserAttachments(user.email, chatId, content)
+  const effectiveContent = processedContent || content
+
   // Strip non-system/history messages for context
   const history = chat.messages.map((m) => ({ role: m.role, content: m.content }))
-  const apiMessages = [...systemMessage, ...history, { role: 'user', content }]
+  const apiMessages = [...systemMessage, ...history, { role: 'user', content: effectiveContent }]
 
   // Add user message to chat file
   const userMsg: MessageItem = {
     id: crypto.randomUUID(),
     role: 'user',
-    content,
+    content: effectiveContent,
     createdAt: new Date().toISOString(),
   }
   chat.messages.push(userMsg)
@@ -431,7 +436,7 @@ export async function POST(request: NextRequest) {
       apiKey,
       systemMessages: capabilityPrompts,
       history,
-      userMessage: content,
+      userMessage: effectiveContent,
       temperature,
       topP,
       maxTokens,
