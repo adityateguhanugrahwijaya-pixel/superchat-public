@@ -98,3 +98,31 @@ Root sesi: `sandbox/{safeEmail}/{chatId}/`
 ### Klarifikasi Sistem: Batasan Paket
 - **Konfirmasi**: Tidak ada sistem batasan paket (tier limits, daily token limits per tier, allowed models per tier, atau rate limit per package) yang aktif atau diberlakukan di SuperChat.
 - Semua user yang terautentikasi dan memiliki sandbox aktif memiliki akses penuh tanpa limitasi tier paket. Desain agent v2 tidak memberlakukan batasan paket.
+
+---
+
+## 5. Tool Registry, Schema & Present Files (Fase 3)
+
+### Tool Registry Terpusat (`lib/agent/tools/registry.ts`)
+- **Struktur Unified**: Setiap tool mendefinisikan `name`, `description`, `parameters` (JSON Schema), `isRisky`, `aliases`, dan fungsi `execute(context, args)`.
+- **Ekspor Skema Ganda**:
+  - `getOpenAISchema()`: Format OpenAI tools `[{ type: 'function', function: { name, description, parameters } }]`.
+  - `getPromptDocumentation()`: Dokumentasi teks komprehensif untuk mode text-based agent loop.
+- **Daftar Tool Terdaftar**:
+  1. `execute_command` (alias: `run_shell`, `bash`): Eksekusi shell via `LocalDriver` dengan pemantauan perubahan file workspace dan perlindungan aturan keamanan `assessToolSafety`.
+  2. `run_python`: Runner Python 3 dengan preflight deteksi venv/interpreter, penanganan virtual path, dan saran otomatis jika terjadi `ModuleNotFoundError`.
+  3. `run_node`: Runner Node.js/JavaScript dengan pelacakan file baru.
+  4. `read_file` (alias: `view`, `cat`): Mendukung paginasi baris (`offset` dan `limit`) untuk file berukuran besar guna mencegah ledakan token konteks.
+  5. `write_file` (alias: `create_file`): Menulis file dengan pembuatan subdirektori rekursif, memblokir penulisan ke `.agent/` dan pencegahan penimpaan direktori.
+  6. `edit_file` (alias: `str_replace`): Search-and-replace string presisi dengan fallback snippet preview jika tidak cocok.
+  7. `list_dir` (alias: `ls`): Penelusuran hierarki direktori dengan kedalaman terkontrol (`depth`).
+  8. `delete_file` (alias: `rm`): Penghapusan file/direktori yang ditandai `isRisky: true`, dengan proteksi terhadap root sesi dan folder internal.
+  9. `present_files` (alias: `show_files`, `publish_files`): Menandai file hasil kerja sebagai file akhir yang siap diunduh/dipratinjau user, memverifikasi eksistensi file di disk, tidak memindahkan lokasi file, membatasi judul maksimum 5 kata, dan menghasilkan event `type: 'file'`.
+
+### Validasi Argumen & Normalisasi Alias (`lib/agent/tools/validator.ts`)
+- Memvalidasi argumen terhadap JSON Schema sebelum eksekusi.
+- Menyelesaikan variasi nama parameter umum LLM secara otomatis (mis. `filepath`/`file` $\rightarrow$ `path`, `cmd` $\rightarrow$ `command`, `script` $\rightarrow$ `code`).
+- Menolak argumen invalid/kosong dengan pesan error terstruktur agar model dapat memperbaiki panggilannya.
+
+### Migrasi Executor Warisan (`lib/sandbox/executor.ts`)
+- `executeSandboxTool` kini mendelegasikan eksekusinya langsung ke Tool Registry baru, memastikan bahwa baik loop lama maupun v2 engine mendapatkan fitur keamanan proses group kill, paginasi file, dan validasi skema yang sama.

@@ -167,7 +167,7 @@ export async function* runAgent(
           yield { type: 'tool-call', id: toolId, name: toolName, args: params }
 
           const toolStart = Date.now()
-          const toolResult = await executeSandboxTool(userEmail, chatId, toolName, params)
+          const toolResult = await executeSandboxTool(userEmail, chatId, toolName, params, signal)
           const durationMs = Date.now() - toolStart
 
           const status = toolResult.success ? 'success' : 'failed'
@@ -188,7 +188,15 @@ export async function* runAgent(
             truncated: outputSnippet.length > 4000,
           }
 
-          if (toolName === 'present_files' && toolResult.filePath) {
+          if (toolResult.presentedFiles && toolResult.presentedFiles.length > 0) {
+            for (const pf of toolResult.presentedFiles) {
+              yield {
+                type: 'file',
+                path: pf.path,
+                title: pf.title,
+              }
+            }
+          } else if (toolName === 'present_files' && toolResult.filePath) {
             yield {
               type: 'file',
               path: toolResult.filePath,
