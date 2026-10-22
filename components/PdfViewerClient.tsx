@@ -204,17 +204,15 @@ export default function PdfViewerClient({ fileUrl, title, fallbackContent }: Pdf
             }
             error={null}
           >
-            <Page
-              pageNumber={pageNumber}
-              scale={scale}
-              renderTextLayer={false}
-              renderAnnotationLayer={false}
-              className="pdf-page-shadow"
-              style={{
-                boxShadow: '0 4px 20px #00000018',
-                borderRadius: 4,
-              }}
-            />
+            <div style={{ boxShadow: '0 4px 20px #00000018', borderRadius: 4, display: 'inline-block' }}>
+              <Page
+                pageNumber={pageNumber}
+                scale={scale}
+                renderTextLayer={false}
+                renderAnnotationLayer={false}
+                className="pdf-page-shadow"
+              />
+            </div>
           </Document>
         )}
       </div>

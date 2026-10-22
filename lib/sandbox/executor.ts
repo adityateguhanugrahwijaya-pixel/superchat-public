@@ -26,7 +26,7 @@ const MAX_OUTPUT_CHARS = 200_000 // cap on what is sent back to the model
  */
 function getChildEnv(): NodeJS.ProcessEnv {
   const blocked = /(SECRET|PASSWORD|PASSWD|API_?KEY|TOKEN|ADMIN_|BETTER_AUTH|PRIVATE_KEY|CREDENTIAL)/i
-  const env: NodeJS.ProcessEnv = {}
+  const env: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV }
   for (const [key, value] of Object.entries(process.env)) {
     if (!blocked.test(key)) env[key] = value
   }
@@ -82,11 +82,17 @@ function detectNewOrModifiedFiles(sandboxDir: string, before: Map<string, FileSt
 // ---------------------------------------------------------------------------
 // Small utilities
 // ---------------------------------------------------------------------------
-function pickParam(params: Record<string, any>, keys: string[]): string {
+function pickParam(params: any, keys: string[]): string {
+  if (typeof params === 'string' && params.trim()) return params
+  if (!params || typeof params !== 'object') return ''
   for (const key of keys) {
     const v = params[key]
     if (typeof v === 'string' && v.trim()) return v
+    if (Array.isArray(v)) return v.join('\n')
   }
+  // Fallback: If params has a single string value, use it
+  const stringValues = Object.values(params).filter((v) => typeof v === 'string' && (v as string).trim())
+  if (stringValues.length === 1) return stringValues[0] as string
   return ''
 }
 
@@ -448,7 +454,9 @@ export async function executeSandboxTool(
 
       case 'execute_command':
       case 'run_shell': {
-        const command = String(params.command || params.cmd || '').trim()
+        const command = String(
+          params.command || params.cmd || params.exec || params.code || params.script || params.input || ''
+        ).trim()
         if (!command) {
           return { success: false, output: 'Error: command parameter is required.', error: 'Empty command' }
         }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/session'
+import { requireUser, isAuthError } from '@/lib/session'
 import { resolveSandboxPath, isUserSandboxEnabled } from '@/lib/sandbox'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -159,6 +159,9 @@ export async function GET(request: NextRequest) {
       headers,
     })
   } catch (err: any) {
+    if (isAuthError(err)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     return NextResponse.json({ error: err?.message || 'Unauthorized or file access error' }, { status: 500 })
   }
 }

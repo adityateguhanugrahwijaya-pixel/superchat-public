@@ -34,8 +34,8 @@ function fetchText(targetUrl: string, postData = '', headers: Record<string, str
     }
 
     if (postData) {
-      opts.headers!['Content-Type'] = 'application/x-www-form-urlencoded'
-      opts.headers!['Content-Length'] = Buffer.byteLength(postData)
+      ;(opts.headers as Record<string, any>)['Content-Type'] = 'application/x-www-form-urlencoded'
+      ;(opts.headers as Record<string, any>)['Content-Length'] = Buffer.byteLength(postData)
     }
 
     const req = client.request(opts, (res) => {

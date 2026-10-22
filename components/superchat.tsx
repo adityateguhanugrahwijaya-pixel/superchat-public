@@ -166,52 +166,67 @@ function parseToolCallsAndCleanContent(rawText: string) {
 
   if (!rawText) return { cleanText: '', toolCalls: [] }
 
-  // 1. Match closed OR unclosed tool call blocks (e.g. ```tool_call ... ``` or unclosed ```tool_call ... at EOF)
-  const toolCallBlockRegex = /(?:```(?:tool_call|toolcall|tool|json)?\s*([\s\S]*?)(?:```|$)|<tool_call>\s*([\s\S]*?)(?:<\/tool_call>|$))/gi
-  let match
-  while ((match = toolCallBlockRegex.exec(rawText)) !== null) {
-    const jsonStr = (match[1] || match[2] || '').trim()
-    if (!jsonStr) continue
+  const execRegex = />?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`?([a-zA-Z0-9_.-]+)`?(?:\.\.\.)?/gi
+  const outputRegex = />?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```([\s\S]*?)```|([^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*))?/gi
 
-    let name = ''
-    try {
-      const data = parseToolCallJson(jsonStr)
-      if (data && data.tool) {
-        name = data.tool
-      }
-    } catch {}
-
-    if (!name) {
-      const nameMatch = jsonStr.match(/"(?:tool|name|action)"\s*:\s*"([^"]+)"/i)
-      if (nameMatch) name = nameMatch[1].trim()
-    }
-
-    if (name && !toolCalls.some((t) => t.toolName === name)) {
-      toolCalls.push({ toolName: name, status: 'running' })
-    }
-  }
-
-  // 2. Match > 🛠️ **Executing Tool:** `tool_name`...
-  const execRegex = />?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`([^`\r\n]+)`(?:\.\.\.)?/gi
+  // 1. Locate all execution markers
+  const execs: Array<{ toolName: string; index: number; endIndex: number }> = []
+  let match: RegExpExecArray | null
   while ((match = execRegex.exec(rawText)) !== null) {
-    const name = match[1].trim()
-    const existing = toolCalls.find((t) => t.toolName === name)
-    if (!existing) {
-      toolCalls.push({ toolName: name, status: 'running' })
-    }
+    execs.push({
+      toolName: match[1].trim(),
+      index: match.index,
+      endIndex: match.index + match[0].length,
+    })
   }
 
-  // 3. Match tool outputs (closed or unclosed, code block or plain text or notices)
-  const outputHeaderRegex = />?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```([\s\S]*?)```|([^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*))?/gi
-  let outIdx = 0
-  let outMatch
-  while ((outMatch = outputHeaderRegex.exec(rawText)) !== null) {
-    const isError = outMatch[0].includes('Error') || outMatch[0].includes('❌')
-    const text = (outMatch[1] || outMatch[2] || '').trim()
-    if (toolCalls[outIdx]) {
-      toolCalls[outIdx].status = isError ? 'failed' : 'success'
-      if (text) toolCalls[outIdx].output = text
-      outIdx++
+  // 2. If no execution markers yet, check for raw tool_call blocks in progress
+  if (execs.length === 0) {
+    const toolCallBlockRegex = /(?:```(?:tool_call|toolcall|tool|json)?\s*([\s\S]*?)(?:```|$)|<tool_call>\s*([\s\S]*?)(?:<\/tool_call>|$))/gi
+    while ((match = toolCallBlockRegex.exec(rawText)) !== null) {
+      const jsonStr = (match[1] || match[2] || '').trim()
+      if (!jsonStr) continue
+
+      let name = ''
+      try {
+        const data = parseToolCallJson(jsonStr)
+        if (data && data.tool) {
+          name = data.tool
+        }
+      } catch {}
+
+      if (!name) {
+        const nameMatch = jsonStr.match(/"(?:tool|name|action)"\s*:\s*"([^"]+)"/i)
+        if (nameMatch) name = nameMatch[1].trim()
+      }
+
+      if (name && !toolCalls.some((t) => t.toolName === name)) {
+        toolCalls.push({ toolName: name, status: 'running' })
+      }
+    }
+  } else {
+    // 3. For each execution marker, check if a matching output block follows before the next execution marker
+    for (let i = 0; i < execs.length; i++) {
+      const cur = execs[i]
+      const nextIndex = i + 1 < execs.length ? execs[i + 1].index : rawText.length
+      const slice = rawText.slice(cur.endIndex, nextIndex)
+
+      outputRegex.lastIndex = 0
+      const outMatch = outputRegex.exec(slice)
+      if (outMatch) {
+        const isError = outMatch[0].includes('Error') || outMatch[0].includes('❌')
+        const outputText = (outMatch[1] || outMatch[2] || '').trim()
+        toolCalls.push({
+          toolName: cur.toolName,
+          status: isError ? 'failed' : 'success',
+          output: outputText || undefined,
+        })
+      } else {
+        toolCalls.push({
+          toolName: cur.toolName,
+          status: 'running',
+        })
+      }
     }
   }
 
@@ -456,7 +471,13 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   useEffect(() => {
     fetch('/api/usage').then((r) => (r.ok ? r.json() : null)).then((data) => data && setUsage(data)).catch(() => {})
     Promise.all([
-      fetch('/api/chats').then((r) => r.json()),
+      fetch('/api/chats').then((r) => {
+        if (r.status === 401) {
+          window.location.href = '/sign-in'
+          return []
+        }
+        return r.json()
+      }),
       fetch('/api/models').then((r) => (r.ok ? r.json() : fallbackModels)),
     ])
       .then(([loadedChats, loadedModels]) => {
@@ -500,8 +521,15 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     }
     if (activeId) {
       fetch(`/api/chats/${activeId}`)
-        .then((r) => r.json())
+        .then((r) => {
+          if (r.status === 401) {
+            window.location.href = '/sign-in'
+            return null
+          }
+          return r.json()
+        })
         .then((data) => {
+          if (!data) return
           if (Array.isArray(data)) {
             setMessages(data)
             setIsAgentRunning(false)
@@ -532,7 +560,14 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
       if (streamingRef.current) return
 
       fetch(`/api/chats/${activeId}`)
-        .then((r) => r.json())
+        .then((r) => {
+          if (r.status === 401) {
+            clearInterval(interval)
+            window.location.href = '/sign-in'
+            return null
+          }
+          return r.json()
+        })
         .then((data) => {
           if (data && Array.isArray(data.messages)) {
             const running = Boolean(data.isAgentRunning)
@@ -543,7 +578,14 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
         .catch(() => {})
 
       fetch('/api/chats')
-        .then((r) => r.json())
+        .then((r) => {
+          if (r.status === 401) {
+            clearInterval(interval)
+            window.location.href = '/sign-in'
+            return null
+          }
+          return r.json()
+        })
         .then(setChats)
         .catch(() => {})
     }, 1800)
@@ -673,7 +715,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
 
     setInput('')
     setStreaming(true)
-
+    setIsAgentRunning(true)
 
     const userMessage = { role: 'user' as const, content: text }
     const assistantMessage = { role: 'assistant' as const, content: '' }
@@ -719,6 +761,20 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
         )
       }
 
+      // Live stream completed: immediately sync final message state and clean tool output from server
+      if (currentChatId) {
+        try {
+          const syncRes = await fetch(`/api/chats/${currentChatId}`)
+          if (syncRes.ok) {
+            const syncData = await syncRes.json()
+            if (syncData && Array.isArray(syncData.messages)) {
+              setMessages(syncData.messages)
+              setIsAgentRunning(Boolean(syncData.isAgentRunning))
+            }
+          }
+        } catch {}
+      }
+
       fetch('/api/chats')
         .then((r) => r.json())
         .then(setChats)
@@ -739,6 +795,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
       )
     } finally {
       setStreaming(false)
+      setIsAgentRunning(false)
     }
 
   }
@@ -1196,10 +1253,19 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                               {(() => {
                                 const { cleanText: textAfterToolCleanup, toolCalls: parsedCalls } = parseToolCallsAndCleanContent(parsedContent || '')
                                 const existingCalls = (message as any).toolCalls || []
-                                const combinedToolCalls = [...existingCalls]
-                                for (const pc of parsedCalls) {
-                                  if (!combinedToolCalls.some((t: any) => t.toolName === pc.toolName)) {
+                                const combinedToolCalls: any[] = []
+                                const maxLen = Math.max(existingCalls.length, parsedCalls.length)
+                                for (let i = 0; i < maxLen; i++) {
+                                  const ex = existingCalls[i]
+                                  const pc = parsedCalls[i]
+                                  if (pc && ex) {
+                                    const status = (pc.status === 'success' || pc.status === 'failed') ? pc.status : (ex.status || pc.status)
+                                    const output = pc.output || ex.output
+                                    combinedToolCalls.push({ ...ex, ...pc, status, output })
+                                  } else if (pc) {
                                     combinedToolCalls.push(pc)
+                                  } else if (ex) {
+                                    combinedToolCalls.push(ex)
                                   }
                                 }
 
