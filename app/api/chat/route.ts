@@ -345,7 +345,8 @@ export async function POST(request: NextRequest) {
         `- read_file: {"tool": "read_file", "params": {"path": "filename.ext"}} (read file contents)\n` +
         `- edit_file: {"tool": "edit_file", "params": {"path": "filename.ext", "target": "old text", "replacement": "new text"}}\n` +
         `- list_dir: {"tool": "list_dir", "params": {"path": "."}} (list directory items)\n` +
-        `- delete_file: {"tool": "delete_file", "params": {"path": "filename.ext"}}\n\n` +
+        `- delete_file: {"tool": "delete_file", "params": {"path": "filename.ext"}}\n` +
+        `- present_files: {"tool": "present_files", "params": {"files": ["filename.ext"]}} (presents final file card(s) to user)\n\n` +
         `2. RELATIVE PATHS ONLY:\n` +
         `- Always create and write files using simple relative filenames in the current directory (e.g. "proposal.pdf" or "app.py").\n` +
         `- NEVER use '/mnt/data/', '/tmp/', '/root/', or absolute paths! They will fail.\n\n` +
