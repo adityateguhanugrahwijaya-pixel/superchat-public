@@ -94,3 +94,7 @@ Root sesi: `sandbox/{safeEmail}/{chatId}/`
 ### Paritas Stream Warisan (`lib/agent/stream/legacy.ts`)
 - Menjamin kecocokan format output byte-demi-byte dengan format legacy UI (`> 🛠️ **Executing Tool:**`, `> ✅ **Output:**`, tag `<file>`).
 - Flag kompatibilitas: `AGENT_ENGINE=legacy|v2` (default: `legacy` sampai seluruh fase selesai dan lolos pengujian).
+
+### Klarifikasi Sistem: Batasan Paket
+- **Konfirmasi**: Tidak ada sistem batasan paket (tier limits, daily token limits per tier, allowed models per tier, atau rate limit per package) yang aktif atau diberlakukan di SuperChat.
+- Semua user yang terautentikasi dan memiliki sandbox aktif memiliki akses penuh tanpa limitasi tier paket. Desain agent v2 tidak memberlakukan batasan paket.
