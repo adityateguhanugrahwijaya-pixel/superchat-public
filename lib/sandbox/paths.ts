@@ -81,7 +81,7 @@ export const getSandboxDir = getSessionDir
 const VIRTUAL_UPLOADS = /^\/mnt\/user-data\/uploads(?:\/|$)/i
 const VIRTUAL_OUTPUTS = /^\/mnt\/user-data\/outputs(?:\/|$)/i
 const VIRTUAL_CLAUDE = /^\/home\/claude(?:\/|$)/i
-const VIRTUAL_SKILLS = /^\/skills(?:\/|$)/i
+const VIRTUAL_SKILLS = /^\/?skills(?:\/|$)/i
 const LEGACY_LLM_PREFIX =
   /^(?:\/mnt\/user-data\/|\/mnt\/data\/|\/var\/tmp\/|\/tmp\/|\/root\/|\/workspace\/|[a-zA-Z]:[\\\/])/i
 

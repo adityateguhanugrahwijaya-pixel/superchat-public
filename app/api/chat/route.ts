@@ -8,6 +8,7 @@ import { executeSandboxTool } from '@/lib/sandbox/executor'
 import { runAgent } from '@/lib/agent/engine'
 import { createLegacyEventStream } from '@/lib/agent/stream/legacy'
 import { processUserAttachments } from '@/lib/agent/uploads'
+import { formatSkillsCatalogPrompt } from '@/lib/agent/skills/loader'
 import fs from 'node:fs'
 
 // In-memory registry for background running jobs
@@ -361,6 +362,11 @@ export async function POST(request: NextRequest) {
         `- STRICT 5-WORD LIMIT: The title inside <file> tag MUST BE 5 WORDS OR FEWER (e.g. <file path="app.py">Main Script</file>). NEVER place code, script contents, or text longer than 5 words inside <file> tags. Titles exceeding 5 words will be automatically rejected and sanitized.\n` +
         `- ONLY output a <file> tag AFTER the file has actually been written/created in the sandbox workspace.`
     )
+
+    const skillsPrompt = formatSkillsCatalogPrompt()
+    if (skillsPrompt) {
+      capabilityPrompts.push(skillsPrompt)
+    }
   }
 
   if (enableWebSearch) {
