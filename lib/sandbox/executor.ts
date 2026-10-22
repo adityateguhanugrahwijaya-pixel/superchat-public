@@ -2,6 +2,7 @@ import { exec } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getSandboxDir, resolveSandboxPath } from './index'
+import { applyVenvToEnv, detectPython } from './runtime'
 
 export type ToolExecutionResult = {
   success: boolean
@@ -20,18 +21,6 @@ const MAX_BUFFER_BYTES = 50 * 1024 * 1024 // stdout+stderr cap per stream (Node 
 const MAX_OUTPUT_CHARS = 200_000 // cap on what is sent back to the model
 
 /**
- * Optional: set PYTHON_BIN in .env.local to use a specific interpreter,
- * e.g. the Python from your cloned conda env / venv:
- *   PYTHON_BIN=/home/me/miniconda3/envs/new_env/bin/python
- *   PYTHON_BIN=C:\Users\me\venvs\new_env\Scripts\python.exe
- */
-function getPythonBin(): string {
-  const custom = process.env.PYTHON_BIN?.trim()
-  if (custom) return custom
-  return process.platform === 'win32' ? 'python' : 'python3'
-}
-
-/**
  * Environment passed to scripts/commands the agent runs. Strips secrets
  * (admin password, API keys, auth secrets) so an agent-written script can't print them.
  */
@@ -41,7 +30,8 @@ function getChildEnv(): NodeJS.ProcessEnv {
   for (const [key, value] of Object.entries(process.env)) {
     if (!blocked.test(key)) env[key] = value
   }
-  return env
+  // `python` / `pip` typed in execute_command resolve to the sandbox venv when it exists
+  return applyVenvToEnv(env)
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +386,12 @@ export async function executeSandboxTool(
           }
         }
 
+        // Preflight: is Python installed / is the sandbox environment ready?
+        const py = detectPython()
+        if (!py.found) {
+          return { success: false, output: py.message || 'Python is not available.', error: 'Python not available' }
+        }
+
         // Redirect absolute paths LLMs like to use (/mnt/data, /tmp, ...) into the sandbox.
         // Handles both "/tmp/file.csv" and a bare "/tmp".
         code = code.replace(
@@ -406,9 +402,8 @@ export async function executeSandboxTool(
         const tempFile = path.join(sandboxDir, `_temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.py`)
         fs.writeFileSync(tempFile, code, 'utf-8')
 
-        const pyBin = getPythonBin()
         return runScript({
-          command: `"${pyBin}" "${tempFile}"`,
+          command: `${py.commandLine} "${tempFile}"`,
           tempFile,
           sandboxDir,
           label: 'Python',
@@ -417,7 +412,7 @@ export async function executeSandboxTool(
             const missingMod = output.match(/ModuleNotFoundError:\s*No module named ['"]([^'"]+)['"]/i)?.[1]
             if (!missingMod) return ''
             const pkg = missingMod.split('.')[0]
-            return `\n\n💡 **Action Required:** Missing Python package '${pkg}'. Use execute_command tool: {"command": "\\"${pyBin}\\" -m pip install ${pkg}"} to install it into the same Python that runs your scripts.`
+            return `\n\n💡 **Action Required:** Missing Python package '${pkg}'. Use execute_command tool: {"command": "${py.commandLine.replace(/"/g, '\\"')} -m pip install ${pkg}"} to install it into the same Python that runs your scripts.`
           },
         })
       }
