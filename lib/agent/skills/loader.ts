@@ -162,7 +162,9 @@ export function formatSkillsCatalogPrompt(): string {
   for (const skill of catalog) {
     const triggerList = skill.triggers.length > 0 ? ` (Triggers: ${skill.triggers.join(', ')})` : ''
     const depList = skill.dependencies.length > 0 ? ` [Requires: ${skill.dependencies.join(', ')}]` : ''
-    lines.push(`- **${skill.name}**: ${skill.description}${triggerList}${depList}`)
+    const firstSentence = skill.description.split(/(?<=[.?!])\s+/)[0] || skill.description
+    const shortDesc = firstSentence.length > 200 ? `${firstSentence.slice(0, 197)}...` : firstSentence
+    lines.push(`- **${skill.name}**: ${shortDesc}${triggerList}${depList}`)
     lines.push(`  Path: \`${skill.skillPath}\``)
   }
 
