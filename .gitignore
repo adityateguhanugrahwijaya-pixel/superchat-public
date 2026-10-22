@@ -28,3 +28,6 @@ tsconfig.tsbuildinfo
 node_modules
 .next/
 .DS_Store
+NOTES.md
+notes.md
+docs/agent-v2/
