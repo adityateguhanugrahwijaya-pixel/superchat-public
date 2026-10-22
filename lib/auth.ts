@@ -26,6 +26,19 @@ const baseURL =
 
 const origins = [
   'http://localhost:3000',
+  'http://localhost:*',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:*',
+  'http://[::1]:*',
+  'http://192.168.*.*:*',
+  'http://10.*.*.*:*',
+  'http://172.16.*.*:*',
+  'http://172.17.*.*:*',
+  'http://172.18.*.*:*',
+  'http://172.19.*.*:*',
+  'http://172.2*.*.*:*',
+  'http://172.30.*.*:*',
+  'http://172.31.*.*:*',
   nonEmpty(process.env.V0_RUNTIME_URL),
   nonEmpty(process.env.V0_DEV_APP_URL),
   nonEmpty(process.env.V0_BUILD_URL),
@@ -36,6 +49,13 @@ const origins = [
 
 export const authSecret = process.env.BETTER_AUTH_SECRET?.trim() || 'superchat_default_secret_key_bynara_auth_32bytes_min'
 
+const isV0 = Boolean(
+  process.env.V0_RUNTIME_URL ||
+  process.env.V0_DEV_APP_URL ||
+  process.env.V0_BUILD_URL ||
+  process.env.V0_SANDBOX_URL
+)
+
 export const auth = betterAuth({
   secret: authSecret,
   database: sqlite,
@@ -44,7 +64,7 @@ export const auth = betterAuth({
   emailAndPassword: { enabled: true },
   advanced: {
     useSnakeCase: true,
-    ...(process.env.NODE_ENV === 'development'
+    ...(isV0
       ? { defaultCookieAttributes: { sameSite: 'none' as const, secure: true } }
       : {}),
   },

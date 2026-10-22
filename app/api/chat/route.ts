@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/session'
+import { requireUser, isAuthError } from '@/lib/session'
 import { db } from '@/lib/db'
 import { getChat, createChatFile, saveChat, MessageItem } from '@/lib/chats'
 import { performWebSearch } from '@/lib/websearch'
@@ -10,24 +10,227 @@ import fs from 'node:fs'
 // In-memory registry for background running jobs
 const activeAgentJobs = new Map<string, { cancel: boolean; startedAt: number }>()
 
-export async function DELETE(request: NextRequest) {
-  const user = await requireUser()
-  const searchParams = new URL(request.url).searchParams
-  const chatId = searchParams.get('chatId')
-  if (chatId) {
-    const job = activeAgentJobs.get(chatId)
-    if (job) job.cancel = true
-    const chat = getChat(user.email, chatId)
-    if (chat) {
-      chat.isAgentRunning = false
-      saveChat(user.email, chat)
+const KNOWN_TOOLS = new Set([
+  'run_python',
+  'run_node',
+  'execute_command',
+  'run_shell',
+  'write_file',
+  'read_file',
+  'edit_file',
+  'list_dir',
+  'delete_file',
+])
+
+function cleanAssistantContent(rawText: string): string {
+  if (!rawText) return ''
+  return rawText
+    .replace(/(?:```(?:tool_call|toolcall|tool)\s*[\s\S]*?(?:```|$)|<tool_call>\s*[\s\S]*?(?:<\/tool_call>|$))/gi, '')
+    .replace(/>?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`?[^`\r\n]+`?\s*(?:\.\.\.)?[\r\n]*/gi, '')
+    .replace(/>?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*)?[\r\n]*/gi, '')
+    .replace(/>?\s*⚠️\s*\*\*Notice:\*\*\s*[^\r\n]*(?:[\r\n]+[^\r\n]+)*/gi, '')
+    .replace(/>?\s*(?:✅|❌)?\s*(?:Output|Execution Error|Command executed successfully):\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+)?[\r\n]*/gi, '')
+    .replace(/\[System Tool Execution Feedback\][\s\S]*?(?=\n\n|$)/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function extractToolAndParams(data: any): { tool: string; params: Record<string, any> } | null {
+  if (!data || typeof data !== 'object') return null
+
+  // 1. Determine tool name
+  let tool = String(
+    data.tool ||
+    data.name ||
+    data.action ||
+    data.function?.name ||
+    ''
+  ).trim()
+
+  // If not found in standard properties, check if a known tool is the key itself
+  // e.g. { "run_python": { "code": "..." } } or { "run_python": "print(1)" }
+  if (!tool) {
+    for (const key of Object.keys(data)) {
+      const lower = key.toLowerCase().trim()
+      if (KNOWN_TOOLS.has(lower)) {
+        tool = lower
+        const val = data[key]
+        if (typeof val === 'string') {
+          return { tool, params: { code: val, command: val, content: val, path: val } }
+        } else if (val && typeof val === 'object') {
+          return { tool, params: val }
+        }
+      }
     }
   }
-  return NextResponse.json({ ok: true })
+
+  if (!tool) return null
+
+  const lowerTool = tool.toLowerCase()
+  if (KNOWN_TOOLS.has(lowerTool)) {
+    tool = lowerTool
+  }
+
+  // 2. Extract params
+  let rawParams =
+    data.params ??
+    data.parameters ??
+    data.input ??
+    data.arguments ??
+    data.function?.arguments
+
+  if (typeof rawParams === 'string') {
+    const trimmed = rawParams.trim()
+    try {
+      rawParams = JSON.parse(trimmed)
+    } catch {
+      rawParams = { code: trimmed, command: trimmed, content: trimmed, path: trimmed }
+    }
+  }
+
+  let params: Record<string, any> = (rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)) ? { ...rawParams } : {}
+
+  // 3. Merge in top-level fields (e.g. { "tool": "run_python", "code": "..." })
+  const {
+    tool: _t,
+    name: _n,
+    action: _a,
+    type: _ty,
+    function: _f,
+    id: _id,
+    params: _p,
+    arguments: _args,
+    parameters: _params,
+    input: _in,
+    ...topLevelFields
+  } = data
+
+  params = { ...topLevelFields, ...params }
+
+  return { tool, params }
+}
+
+function parseToolCallJson(rawStr: string): { tool?: string; params?: Record<string, any> } | null {
+  const trimmed = rawStr.trim()
+  if (!trimmed) return null
+
+  // Attempt 1: Direct JSON parse
+  try {
+    const data = JSON.parse(trimmed)
+    const res = extractToolAndParams(data)
+    if (res && res.tool) return res
+  } catch {}
+
+  // Attempt 2: Sanitize literal unescaped newlines/tabs inside string literals
+  try {
+    let sanitized = ''
+    let inString = false
+    let isEscaped = false
+
+    for (let i = 0; i < trimmed.length; i++) {
+      const char = trimmed[i]
+      if (char === '"' && !isEscaped) {
+        inString = !inString
+        sanitized += char
+        isEscaped = false
+        continue
+      }
+
+      if (inString) {
+        if (char === '\n') {
+          sanitized += '\\n'
+        } else if (char === '\r') {
+          sanitized += '\\r'
+        } else if (char === '\t') {
+          sanitized += '\\t'
+        } else {
+          sanitized += char
+        }
+      } else {
+        sanitized += char
+      }
+
+      if (char === '\\' && !isEscaped) {
+        isEscaped = true
+      } else {
+        isEscaped = false
+      }
+    }
+
+    sanitized = sanitized.replace(/,\s*([}\]])/g, '$1')
+
+    const data = JSON.parse(sanitized)
+    const res = extractToolAndParams(data)
+    if (res && res.tool) return res
+  } catch {}
+
+  // Attempt 3: Plaintext or regex fallback extraction
+  try {
+    const plainToolMatch = trimmed.match(/^([a-zA-Z_]+)(?::|\n)([\s\S]*)$/)
+    if (plainToolMatch) {
+      const toolCandidate = plainToolMatch[1].trim().toLowerCase()
+      if (KNOWN_TOOLS.has(toolCandidate)) {
+        const body = plainToolMatch[2].trim()
+        return {
+          tool: toolCandidate,
+          params: { code: body, command: body, content: body, path: body },
+        }
+      }
+    }
+
+    const toolMatch = trimmed.match(/["']?(?:tool|name|action)["']?\s*:\s*["']([^"']+)["']/i)
+    if (toolMatch) {
+      const tool = toolMatch[1].trim()
+      const codeMatch = trimmed.match(/["']?(?:code|script|content|command)["']?\s*:\s*["']([\s\S]*?)(?:["']\s*[,}]|$)/i)
+      const pathMatch = trimmed.match(/["']?(?:path|filename|filepath|file)["']?\s*:\s*["']([^"']+)["']/i)
+      return {
+        tool,
+        params: {
+          code: codeMatch ? codeMatch[1] : '',
+          command: codeMatch ? codeMatch[1] : '',
+          content: codeMatch ? codeMatch[1] : '',
+          path: pathMatch ? pathMatch[1] : '',
+        },
+      }
+    }
+  } catch {}
+
+  return null
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const user = await requireUser()
+    const searchParams = new URL(request.url).searchParams
+    const chatId = searchParams.get('chatId')
+    if (chatId) {
+      const job = activeAgentJobs.get(chatId)
+      if (job) job.cancel = true
+      const chat = getChat(user.email, chatId)
+      if (chat) {
+        chat.isAgentRunning = false
+        saveChat(user.email, chat)
+      }
+    }
+    return NextResponse.json({ ok: true })
+  } catch (err: any) {
+    if (isAuthError(err)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    return NextResponse.json({ error: err?.message || 'Server error' }, { status: 500 })
+  }
 }
 
 export async function POST(request: NextRequest) {
-  const user = await requireUser()
+  let user: any
+  try {
+    user = await requireUser()
+  } catch (err: any) {
+    if (isAuthError(err)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    return NextResponse.json({ error: err?.message || 'Server error' }, { status: 500 })
+  }
   const body = await request.json().catch(() => ({}))
   const chatId = String(body.chatId || '')
 
@@ -126,15 +329,15 @@ export async function POST(request: NextRequest) {
         `  }\n` +
         `}\n` +
         `\`\`\`\n` +
-        `AVAILABLE TOOLS:\n` +
-        `- write_file: {"path": "filename.ext", "content": "..."} (write or overwrite file in sandbox)\n` +
-        `- read_file: {"path": "filename.ext"} (read file contents)\n` +
-        `- edit_file: {"path": "filename.ext", "target": "old text", "replacement": "new text"}\n` +
-        `- list_dir: {"path": "."} (list directory items)\n` +
-        `- delete_file: {"path": "filename.ext"}\n` +
-        `- run_python: {"code": "python code..."} (runs python script in sandbox)\n` +
-        `- run_node: {"code": "js code..."} (runs nodejs script in sandbox)\n` +
-        `- execute_command: {"command": "shell command..."} (e.g. "pip install pkg" or "python script.py")\n\n` +
+        `AVAILABLE TOOLS & FORMATS:\n` +
+        `- run_python: {"tool": "run_python", "params": {"code": "python code..."}} (runs python script in sandbox)\n` +
+        `- run_node: {"tool": "run_node", "params": {"code": "js code..."}} (runs nodejs script in sandbox)\n` +
+        `- execute_command: {"tool": "execute_command", "params": {"command": "shell command..."}} (e.g. "pip install pkg" or "python script.py")\n` +
+        `- write_file: {"tool": "write_file", "params": {"path": "filename.ext", "content": "..."}} (write or overwrite file in sandbox)\n` +
+        `- read_file: {"tool": "read_file", "params": {"path": "filename.ext"}} (read file contents)\n` +
+        `- edit_file: {"tool": "edit_file", "params": {"path": "filename.ext", "target": "old text", "replacement": "new text"}}\n` +
+        `- list_dir: {"tool": "list_dir", "params": {"path": "."}} (list directory items)\n` +
+        `- delete_file: {"tool": "delete_file", "params": {"path": "filename.ext"}}\n\n` +
         `2. RELATIVE PATHS ONLY:\n` +
         `- Always create and write files using simple relative filenames in the current directory (e.g. "proposal.pdf" or "app.py").\n` +
         `- NEVER use '/mnt/data/', '/tmp/', '/root/', or absolute paths! They will fail.\n\n` +
@@ -311,108 +514,6 @@ export async function POST(request: NextRequest) {
             saveChat(user.email, currentChat)
           }
 
-function cleanAssistantContent(rawText: string): string {
-  if (!rawText) return ''
-  return rawText
-    .replace(/(?:```(?:tool_call|toolcall|tool)\s*[\s\S]*?(?:```|$)|<tool_call>\s*[\s\S]*?(?:<\/tool_call>|$))/gi, '')
-    .replace(/>?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`?[^`\r\n]+`?\s*(?:\.\.\.)?[\r\n]*/gi, '')
-    .replace(/>?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*)?[\r\n]*/gi, '')
-    .replace(/>?\s*⚠️\s*\*\*Notice:\*\*\s*[^\r\n]*(?:[\r\n]+[^\r\n]+)*/gi, '')
-    .replace(/>?\s*(?:✅|❌)?\s*(?:Output|Execution Error|Command executed successfully):\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+)?[\r\n]*/gi, '')
-    .replace(/\[System Tool Execution Feedback\][\s\S]*?(?=\n\n|$)/gi, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
-
-function parseToolCallJson(rawStr: string): { tool?: string; params?: Record<string, any> } | null {
-  const trimmed = rawStr.trim()
-  if (!trimmed) return null
-
-  // Attempt 1: Direct JSON parse
-  try {
-    const data = JSON.parse(trimmed)
-    if (data && typeof data === 'object') {
-      const tool = String(data.tool || data.name || data.action || '').trim()
-      const params = data.params || data.arguments || data.parameters || data.input || {}
-      return { tool, params }
-    }
-  } catch {}
-
-  // Attempt 2: Escape literal unescaped newlines/tabs inside string literals
-  try {
-    let sanitized = ''
-    let inString = false
-    let isEscaped = false
-
-    for (let i = 0; i < trimmed.length; i++) {
-      const char = trimmed[i]
-      if (char === '"' && !isEscaped) {
-        inString = !inString
-        sanitized += char
-        isEscaped = false
-        continue
-      }
-
-      if (inString) {
-        if (char === '\n') {
-          sanitized += '\\n'
-        } else if (char === '\r') {
-          sanitized += '\\r'
-        } else if (char === '\t') {
-          sanitized += '\\t'
-        } else {
-          sanitized += char
-        }
-      } else {
-        sanitized += char
-      }
-
-      if (char === '\\' && !isEscaped) {
-        isEscaped = true
-      } else {
-        isEscaped = false
-      }
-    }
-
-    sanitized = sanitized.replace(/,\s*([}\]])/g, '$1')
-
-    const data = JSON.parse(sanitized)
-    if (data && typeof data === 'object') {
-      const tool = String(data.tool || data.name || data.action || '').trim()
-      const params = data.params || data.arguments || data.parameters || data.input || {}
-      return { tool, params }
-    }
-  } catch {}
-
-  // Attempt 3: Regex fallback extraction for tool & params if JSON is heavily malformed
-  try {
-    const toolMatch = trimmed.match(/["']?tool["']?\s*:\s*["']([^"']+)["']/i) || trimmed.match(/["']?name["']?\s*:\s*["']([^"']+)["']/i)
-    if (toolMatch) {
-      const tool = toolMatch[1].trim()
-
-      const pathMatch = trimmed.match(/["']?(?:path|filename|filepath|file)["']?\s*:\s*["']([^"']+)["']/i)
-      const pathVal = pathMatch ? pathMatch[1].trim() : ''
-
-      let contentVal = ''
-      const contentMatch = trimmed.match(/["']?(?:content|code|script|text)["']?\s*:\s*["']([\s\S]*?)["']\s*[,}]/i)
-      if (contentMatch) {
-        contentVal = contentMatch[1]
-      }
-
-      return {
-        tool,
-        params: {
-          path: pathVal,
-          content: contentVal,
-          code: contentVal,
-        },
-      }
-    }
-  } catch {}
-
-  return null
-}
-
           let executedTools = 0
 
           // Extract and execute tool calls
@@ -451,6 +552,13 @@ function parseToolCallJson(rawStr: string): { tool?: string; params?: Record<str
                   if (toolResult.filePath) {
                     fileNotice = `\nFiles Created/Updated in Workspace: ${toolResult.filePath}`
                   }
+
+                  // Live stream the completion status & output chunk to client immediately
+                  const resultIcon = toolResult.success ? '✅' : '❌'
+                  const resultHeader = toolResult.success ? 'Output' : 'Execution Error'
+                  const resultMsg = `\n> ${resultIcon} **${resultHeader}:**\n\`\`\`\n${outputSnippet.slice(0, 4000)}\n\`\`\`\n\n`
+                  fullAssistantText += resultMsg
+                  safeWrite(resultMsg)
 
                   // Update chat on disk with structured tool result & clean content
                   const toolChat = getChat(user.email, chatId)

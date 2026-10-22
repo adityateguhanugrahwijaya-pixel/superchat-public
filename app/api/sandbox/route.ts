@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/session'
+import { requireUser, isAuthError } from '@/lib/session'
 import { assessToolSafety } from '@/lib/sandbox/safety'
 import { executeSandboxTool } from '@/lib/sandbox/executor'
 import { isUserSandboxEnabled } from '@/lib/sandbox'
@@ -49,6 +49,9 @@ export async function POST(request: NextRequest) {
     const result = await executeSandboxTool(user.email, chatId, toolName, params || {})
     return NextResponse.json(result)
   } catch (err: any) {
+    if (isAuthError(err)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     return NextResponse.json({ error: err?.message || 'Unauthorized or execution error' }, { status: 500 })
   }
 }
