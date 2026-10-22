@@ -8,6 +8,7 @@ import { SideCanvas, CanvasFile } from './side-canvas'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { authClient } from '@/lib/auth-client'
+import { cleanAssistantContent } from '@/lib/agent/llm/toolcall-text'
 import {
   AlertCircle,
   Bot,
@@ -167,7 +168,7 @@ function parseToolCallsAndCleanContent(rawText: string) {
   if (!rawText) return { cleanText: '', toolCalls: [] }
 
   const execRegex = />?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`?([a-zA-Z0-9_.-]+)`?(?:\.\.\.)?/gi
-  const outputRegex = />?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```([\s\S]*?)```|([^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*))?/gi
+  const outputRegex = />?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```([\s\S]*)```|([^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*))?/i
 
   // 1. Locate all execution markers
   const execs: Array<{ toolName: string; index: number; endIndex: number }> = []
@@ -231,15 +232,7 @@ function parseToolCallsAndCleanContent(rawText: string) {
   }
 
   // 4. Thoroughly clean raw tool_call JSON, headers, output blocks, and notices from cleanText
-  let cleanText = rawText
-    .replace(/(?:```(?:tool_call|toolcall|tool)\s*[\s\S]*?(?:```|$)|<tool_call>\s*[\s\S]*?(?:<\/tool_call>|$))/gi, '')
-    .replace(/>?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`?[^`\r\n]+`?\s*(?:\.\.\.)?[\r\n]*/gi, '')
-    .replace(/>?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*)?[\r\n]*/gi, '')
-    .replace(/>?\s*⚠️\s*\*\*Notice:\*\*\s*[^\r\n]*(?:[\r\n]+[^\r\n]+)*/gi, '')
-    .replace(/>?\s*(?:✅|❌)?\s*(?:Output|Execution Error|Command executed successfully):\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+)?[\r\n]*/gi, '')
-    .replace(/\[System Tool Execution Feedback\][\s\S]*?(?=\n\n|$)/gi, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+  const cleanText = cleanAssistantContent(rawText)
 
   return { cleanText, toolCalls }
 }

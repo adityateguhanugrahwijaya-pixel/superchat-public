@@ -2,7 +2,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { AgentEvent } from './events'
 import { streamChatCompletions, LLMMessage } from './llm/client'
-import { extractTextToolCalls } from './llm/toolcall-text'
+import { extractTextToolCalls, createToolCallFilter } from './llm/toolcall-text'
+import { toolRegistry } from './tools/registry'
+import { getModelCapabilities, saveCachedCapabilities, ModelCapabilities } from './llm/capabilities'
 import { executeSandboxTool } from '../sandbox/executor'
 import { resolveSandboxPath } from '../sandbox/paths'
 
@@ -23,6 +25,7 @@ export interface RunAgentOptions {
   maxTurns?: number
   maxToolCalls?: number
   wallClockMs?: number
+  capabilities?: ModelCapabilities
   onProgressSave?: (
     fullAssistantText: string,
     toolCalls: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>
@@ -72,6 +75,20 @@ export async function* runAgent(
   let doneReason: 'completed' | 'max_turns' | 'max_tool_calls' | 'wall_clock' | 'cancelled' | 'llm_error' =
     'completed'
 
+  let caps: ModelCapabilities = options.capabilities || {
+    toolMode: 'text',
+    contextWindow: 32768,
+    supportsVision: false,
+    supportsUsage: true,
+  }
+  if (!options.capabilities && sandboxActive) {
+    try {
+      caps = await getModelCapabilities(endpointUrl, model, apiKey)
+    } catch {
+      // safe fallback
+    }
+  }
+
   try {
     while (turn < maxTurns) {
       if (signal?.aborted) {
@@ -92,8 +109,14 @@ export async function* runAgent(
       turn++
       yield { type: 'turn-start', turn }
 
+      const toolFilter = createToolCallFilter()
       let turnText = ''
-      try {
+      const accumulatedNativeTools: Record<number, { id: string; name: string; arguments: string }> = {}
+
+      const executeStreamTurn = async function* (withTools: boolean) {
+        const toolsSchema =
+          sandboxActive && withTools ? toolRegistry.getOpenAISchema() : undefined
+
         const stream = streamChatCompletions({
           endpointUrl,
           apiKey,
@@ -102,6 +125,7 @@ export async function* runAgent(
           temperature,
           topP,
           maxTokens,
+          tools: toolsSchema,
           signal,
         })
 
@@ -111,29 +135,80 @@ export async function* runAgent(
             break
           }
 
+          if (chunk.toolCallsDelta && Array.isArray(chunk.toolCallsDelta)) {
+            for (const delta of chunk.toolCallsDelta) {
+              const idx = delta.index ?? 0
+              if (!accumulatedNativeTools[idx]) {
+                accumulatedNativeTools[idx] = {
+                  id: delta.id || `call_${Date.now()}_${idx}`,
+                  name: delta.function?.name || '',
+                  arguments: delta.function?.arguments || '',
+                }
+              } else {
+                if (delta.id) accumulatedNativeTools[idx].id = delta.id
+                if (delta.function?.name) accumulatedNativeTools[idx].name += delta.function.name
+                if (delta.function?.arguments) accumulatedNativeTools[idx].arguments += delta.function.arguments
+              }
+            }
+          }
+
           if (chunk.token) {
             turnText += chunk.token
-            fullAssistantText += chunk.token
-            yield { type: 'text-delta', text: chunk.token }
+            const cleanToken = toolFilter.push(chunk.token)
+            if (cleanToken) {
+              fullAssistantText += cleanToken
+              yield { type: 'text-delta' as const, text: cleanToken }
+            }
           }
 
           if (chunk.usage) {
             yield {
-              type: 'usage',
+              type: 'usage' as const,
               promptTokens: chunk.usage.promptTokens,
               completionTokens: chunk.usage.completionTokens,
               estimated: chunk.usage.estimated,
             }
           }
         }
+
+        const remainingToken = toolFilter.flush()
+        if (remainingToken) {
+          fullAssistantText += remainingToken
+          yield { type: 'text-delta' as const, text: remainingToken }
+        }
+      }
+
+      try {
+        for await (const ev of executeStreamTurn(caps.toolMode === 'native')) {
+          yield ev
+        }
       } catch (err: any) {
         if (signal?.aborted || err?.message?.includes('cancelled')) {
           doneReason = 'cancelled'
+          break
+        }
+        // Dynamic fallback: if native tools failed before any output, downgrade to text mode and retry
+        if (sandboxActive && caps.toolMode === 'native' && turnText === '' && Object.keys(accumulatedNativeTools).length === 0) {
+          caps = { ...caps, toolMode: 'text' }
+          saveCachedCapabilities(endpointUrl, model, caps)
+          try {
+            for await (const ev of executeStreamTurn(false)) {
+              yield ev
+            }
+          } catch (retryErr: any) {
+            if (signal?.aborted || retryErr?.message?.includes('cancelled')) {
+              doneReason = 'cancelled'
+            } else {
+              doneReason = 'llm_error'
+              yield { type: 'error', code: 'LLM_ERROR', message: retryErr?.message || 'LLM error', retryable: false }
+            }
+            break
+          }
         } else {
           doneReason = 'llm_error'
           yield { type: 'error', code: 'LLM_ERROR', message: err?.message || 'LLM error', retryable: false }
+          break
         }
-        break
       }
 
       if (signal?.aborted) {
@@ -146,18 +221,67 @@ export async function* runAgent(
         await onProgressSave(fullAssistantText, recordedToolCalls).catch(() => {})
       }
 
-      // Parse tool calls in this turn
-      let toolCallsInTurn = sandboxActive ? extractTextToolCalls(turnText) : []
+      // Parse tool calls in this turn: native tools + text tool fallback
+      const parsedNativeCalls: Array<{ id: string; tool: string; params: Record<string, any>; isNative: true }> = []
+      for (const idx of Object.keys(accumulatedNativeTools).map(Number).sort((a, b) => a - b)) {
+        const tc = accumulatedNativeTools[idx]
+        if (!tc || !tc.name) continue
+        let params: Record<string, any> = {}
+        if (tc.arguments) {
+          try {
+            params = JSON.parse(tc.arguments)
+          } catch {
+            params = { raw: tc.arguments }
+          }
+        }
+        parsedNativeCalls.push({
+          id: tc.id,
+          tool: tc.name,
+          params,
+          isNative: true,
+        })
+      }
+
+      const parsedTextCalls = sandboxActive ? extractTextToolCalls(turnText) : []
+      const toolCallsInTurn: Array<{ id: string; tool: string; params: Record<string, any>; isNative: boolean }> = [
+        ...parsedNativeCalls,
+      ]
+
+      for (const tc of parsedTextCalls) {
+        const isDuplicate = parsedNativeCalls.some(
+          (n) => n.tool === tc.tool && JSON.stringify(n.params) === JSON.stringify(tc.params)
+        )
+        if (!isDuplicate) {
+          toolCallsInTurn.push({
+            id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            tool: tc.tool,
+            params: tc.params,
+            isNative: false,
+          })
+        }
+      }
+
       let executedToolsThisTurn = 0
 
       if (toolCallsInTurn.length > 0) {
-        // Fix F11: Push the assistant's turn output ONCE before tool execution feedback
-        apiMessages.push({ role: 'assistant', content: turnText })
+        // Push the assistant's turn output with native tool_calls if applicable
+        const assistantMsg: LLMMessage = { role: 'assistant', content: turnText }
+        if (parsedNativeCalls.length > 0) {
+          assistantMsg.tool_calls = parsedNativeCalls.map((c) => ({
+            id: c.id,
+            type: 'function',
+            function: {
+              name: c.tool,
+              arguments: JSON.stringify(c.params),
+            },
+          }))
+        }
+        apiMessages.push(assistantMsg)
 
         for (const call of toolCallsInTurn) {
           if (signal?.aborted || totalToolCalls >= maxToolCalls) break
 
-          const toolId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+          const toolId = call.id
           const toolName = call.tool
           const params = call.params || {}
 
@@ -224,10 +348,19 @@ export async function* runAgent(
             fileNotice = `\nFiles Created/Updated in Workspace: ${toolResult.filePath}`
           }
 
-          apiMessages.push({
-            role: 'user',
-            content: `[System Tool Execution Feedback]\nTool: ${toolName}\nStatus: ${toolResult.success ? 'SUCCESS' : 'FAILED'}\nOutput:\n${toolResult.output || '(none)'}\nError:\n${toolResult.error || 'none'}${fileNotice}\n\nReview the tool result above. If an error occurred or script failed, fix the code and call the next tool. If complete, summarize your work and display the file reference card <file path="filename.ext">Display Title</file>.`,
-          })
+          if (call.isNative) {
+            apiMessages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              name: toolName,
+              content: `Status: ${toolResult.success ? 'SUCCESS' : 'FAILED'}\nOutput:\n${toolResult.output || '(none)'}\nError:\n${toolResult.error || 'none'}${fileNotice}\n\nGuidance: Review the tool result above. If an error occurred or script failed, fix the code and call the next tool. If complete, summarize your work and display the file reference card <file path="filename.ext">Display Title</file>.`,
+            })
+          } else {
+            apiMessages.push({
+              role: 'user',
+              content: `[System Tool Execution Feedback]\nTool: ${toolName}\nStatus: ${toolResult.success ? 'SUCCESS' : 'FAILED'}\nOutput:\n${toolResult.output || '(none)'}\nError:\n${toolResult.error || 'none'}${fileNotice}\n\nReview the tool result above. If an error occurred or script failed, fix the code and call the next tool. If complete, summarize your work and display the file reference card <file path="filename.ext">Display Title</file>.`,
+            })
+          }
         }
       }
 
@@ -283,6 +416,12 @@ export async function* runAgent(
 
     if (turn >= maxTurns && doneReason === 'completed') {
       doneReason = 'max_turns'
+    }
+
+    if (sandboxActive && totalToolCalls > 0 && fullAssistantText.trim().length === 0 && doneReason !== 'cancelled') {
+      const fallbackSummary = 'Completed requested operations.'
+      fullAssistantText += fallbackSummary
+      yield { type: 'text-delta', text: fallbackSummary }
     }
   } finally {
     yield { type: 'done', reason: doneReason }

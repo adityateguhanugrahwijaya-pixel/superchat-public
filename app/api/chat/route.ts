@@ -10,6 +10,7 @@ import { createLegacyEventStream } from '@/lib/agent/stream/legacy'
 import { createSSEEventStream } from '@/lib/agent/stream/sse'
 import { processUserAttachments } from '@/lib/agent/uploads'
 import { formatSkillsCatalogPrompt } from '@/lib/agent/skills/loader'
+import { cleanAssistantContent } from '@/lib/agent/llm/toolcall-text'
 import fs from 'node:fs'
 
 // In-memory registry for background running jobs
@@ -26,19 +27,6 @@ const KNOWN_TOOLS = new Set([
   'list_dir',
   'delete_file',
 ])
-
-function cleanAssistantContent(rawText: string): string {
-  if (!rawText) return ''
-  return rawText
-    .replace(/(?:```(?:tool_call|toolcall|tool)\s*[\s\S]*?(?:```|$)|<tool_call>\s*[\s\S]*?(?:<\/tool_call>|$))/gi, '')
-    .replace(/>?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`?[^`\r\n]+`?\s*(?:\.\.\.)?[\r\n]*/gi, '')
-    .replace(/>?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*)?[\r\n]*/gi, '')
-    .replace(/>?\s*⚠️\s*\*\*Notice:\*\*\s*[^\r\n]*(?:[\r\n]+[^\r\n]+)*/gi, '')
-    .replace(/>?\s*(?:✅|❌)?\s*(?:Output|Execution Error|Command executed successfully):\s*[\r\n]*(?:```[\s\S]*?```|[^\r\n]+)?[\r\n]*/gi, '')
-    .replace(/\[System Tool Execution Feedback\][\s\S]*?(?=\n\n|$)/gi, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
 
 function extractToolAndParams(data: any): { tool: string; params: Record<string, any> } | null {
   if (!data || typeof data !== 'object') return null
@@ -427,7 +415,7 @@ export async function POST(request: NextRequest) {
     activeAgentJobs.set(chatId, currentJob)
   }
 
-  const useV2Engine = process.env.AGENT_ENGINE === 'v2'
+  const useV2Engine = process.env.AGENT_ENGINE !== 'legacy'
 
   if (useV2Engine) {
     let finalAssistantText = ''

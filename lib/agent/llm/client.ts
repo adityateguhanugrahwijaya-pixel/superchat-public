@@ -74,7 +74,6 @@ export async function* streamChatCompletions(
     model,
     messages,
     stream: true,
-    stream_options: { include_usage: true },
     temperature,
     top_p: topP,
     max_tokens: maxTokens,
@@ -164,43 +163,51 @@ export async function* streamChatCompletions(
           const dataStr = trimmed.slice(5).trim()
           if (dataStr === '[DONE]') continue
 
+          let data: any = null
           try {
-            const data = JSON.parse(dataStr)
-
-            // Extract usage if reported by router
-            if (data.usage) {
-              reportedUsage = true
-              yield {
-                token: '',
-                usage: {
-                  promptTokens: data.usage.prompt_tokens || 0,
-                  completionTokens: data.usage.completion_tokens || 0,
-                  estimated: false,
-                },
-              }
-            }
-
-            const choice = data.choices?.[0]
-            if (!choice) continue
-
-            const delta = choice.delta || {}
-            const token = delta.content || ''
-            const reasoning = delta.reasoning_content || delta.reasoning || ''
-            const toolCallsDelta = delta.tool_calls || choice.tool_calls || undefined
-
-            if (token) {
-              totalContentLength += token.length
-            }
-
-            if (token || reasoning || toolCallsDelta) {
-              yield {
-                token,
-                reasoning,
-                toolCallsDelta,
-              }
-            }
+            data = JSON.parse(dataStr)
           } catch {
-            // Ignore malformed chunk
+            continue
+          }
+
+          if (data.error) {
+            const errMsg =
+              data.error.message ||
+              (typeof data.error === 'string' ? data.error : JSON.stringify(data.error))
+            throw new Error(`[Router Error: ${errMsg}]`)
+          }
+
+          // Extract usage if reported by router
+          if (data.usage) {
+            reportedUsage = true
+            yield {
+              token: '',
+              usage: {
+                promptTokens: data.usage.prompt_tokens || 0,
+                completionTokens: data.usage.completion_tokens || 0,
+                estimated: false,
+              },
+            }
+          }
+
+          const choice = data.choices?.[0]
+          if (!choice) continue
+
+          const delta = choice.delta || {}
+          const token = delta.content || ''
+          const reasoning = delta.reasoning_content || delta.reasoning || ''
+          const toolCallsDelta = delta.tool_calls || choice.tool_calls || undefined
+
+          if (token) {
+            totalContentLength += token.length
+          }
+
+          if (token || reasoning || toolCallsDelta) {
+            yield {
+              token,
+              reasoning,
+              toolCallsDelta,
+            }
           }
         }
       }
