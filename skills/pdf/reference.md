@@ -93,6 +93,24 @@ async function createPDF() {
     const page = pdfDoc.addPage([595, 842]); // A4 size
     const { width, height } = page.getSize();
 
+    // 🎨 Full page background (Dark Mode #0F172A or Warm Paper)
+    page.drawRectangle({
+        x: 0,
+        y: 0,
+        width,
+        height,
+        color: rgb(15 / 255, 23 / 255, 42 / 255) // #0F172A
+    });
+
+    // Top Accent Stripe (Indigo #6366F1)
+    page.drawRectangle({
+        x: 0,
+        y: height - 6,
+        width,
+        height: 6,
+        color: rgb(99 / 255, 102 / 255, 241 / 255)
+    });
+
     // Add text with styling
     page.drawText('Invoice #12345', {
         x: 50,
