@@ -802,8 +802,8 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
 
     setInput('')
     setStreaming(true)
-    setIsAgentRunning(true)
-    setAgentActivity('thinking')
+    setIsAgentRunning(false)
+    setAgentActivity('idle')
     setRunStatus(null)
 
     const userMessage: Message = { role: 'user', content: text }
@@ -873,6 +873,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                 if (eventType === 'text-delta' && parsed.text) {
                   answer += parsed.text
                 } else if (eventType === 'tool-call') {
+                  setIsAgentRunning(true)
                   setAgentActivity(`tool:${parsed.name}`)
                   liveToolCalls = [
                     ...liveToolCalls,
@@ -895,8 +896,18 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                     liveFiles = [...liveFiles, { path: parsed.path, title: parsed.title || parsed.path }]
                   }
                 } else if (eventType === 'activity' && parsed.activity) {
-                  setAgentActivity(parsed.activity)
+                  if (parsed.activity === 'idle') {
+                    setIsAgentRunning(false)
+                    setAgentActivity('idle')
+                  } else if (parsed.activity.startsWith('tool:') || liveToolCalls.length > 0) {
+                    setIsAgentRunning(true)
+                    setAgentActivity(parsed.activity)
+                  }
                 } else if (eventType === 'run-status' && parsed.state) {
+                  if (parsed.state === 'completed' || parsed.state === 'failed') {
+                    setIsAgentRunning(false)
+                    setAgentActivity('idle')
+                  }
                   liveRunStatus = {
                     state: parsed.state,
                     code: parsed.code,
@@ -1582,14 +1593,15 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                                 }
 
                                 const isLastMessage = index === messages.length - 1
-                                const isBusy = isLastMessage && (isAgentRunning || (agentActivity !== undefined && agentActivity !== 'idle'))
-                                const activeActivityLabel = isBusy ? (agentActivity && agentActivity !== 'idle' ? agentActivity : 'thinking') : null
+                                const hasToolCalls = combinedToolCalls.length > 0
+                                const isAgentBusy = isLastMessage && isAgentRunning && hasToolCalls
+                                const activeActivityLabel = isAgentBusy ? (agentActivity && agentActivity !== 'idle' ? agentActivity : 'thinking') : null
                                 const hasRunningToolCard = combinedToolCalls.some((t: any) => t.status === 'running')
                                 const msgRunStatus = (message as any).runStatus || (isLastMessage ? runStatus : undefined)
 
                                 return (
                                   <>
-                                    {(combinedToolCalls.length > 0 || activeActivityLabel || (!isBusy && msgRunStatus?.state === 'failed')) && (
+                                    {(hasToolCalls || activeActivityLabel || (!isAgentBusy && msgRunStatus?.state === 'failed')) && (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '8px 0 12px' }}>
                                         {combinedToolCalls.map((tool: any, tIdx: number) => (
                                           <ToolBadgeCard
@@ -1605,7 +1617,7 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                                             statusLabel="Sedang bekerja"
                                           />
                                         )}
-                                        {!isBusy && msgRunStatus?.state === 'failed' && (
+                                        {!isAgentBusy && msgRunStatus?.state === 'failed' && (
                                           <ToolBadgeCard
                                             key="run-status-failed"
                                             tool={{
@@ -1627,6 +1639,13 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                                       >
                                         {cleanContent}
                                       </ReactMarkdown>
+                                    )}
+
+                                    {streaming && isLastMessage && !cleanContent && !thinking && !hasToolCalls && (
+                                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 0', color: 'var(--muted-foreground)' }}>
+                                        <span className="loading-dots" style={{ fontSize: 18, lineHeight: 1 }}>•••</span>
+                                        <span style={{ fontSize: 13, opacity: 0.85 }}>Thinking…</span>
+                                      </div>
                                     )}
 
                                     {fileTags.map((file, fIdx) => (

@@ -442,8 +442,8 @@ export async function POST(request: NextRequest) {
   }
   chat.schema = 2
   chat.messages.push(assistantMsg)
-  chat.isAgentRunning = sandboxActive
-  chat.activity = 'thinking'
+  chat.isAgentRunning = false
+  chat.activity = 'idle'
   chat.runStatus = { state: 'running' }
   chat.updatedAt = new Date().toISOString()
   saveChat(user.email, chat)
@@ -508,9 +508,10 @@ export async function POST(request: NextRequest) {
               liveChat.messages[idx].runStatus = meta.runStatus
             }
           }
-          if (meta?.activity) {
-            liveChat.activity = meta.activity
-          }
+          const hasTools = toolCalls.length > 0 || (meta?.activity && meta.activity.startsWith('tool:'))
+          const isCompleted = meta?.runStatus?.state === 'completed' || meta?.runStatus?.state === 'failed'
+          liveChat.isAgentRunning = sandboxActive && Boolean(hasTools) && !isCompleted
+          liveChat.activity = isCompleted ? 'idle' : (meta?.activity || (hasTools ? 'thinking' : 'idle'))
           if (meta?.runStatus !== undefined) {
             liveChat.runStatus = meta.runStatus
           }
