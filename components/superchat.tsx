@@ -27,6 +27,7 @@ import {
   PanelLeft,
   Paperclip,
   Pencil,
+  RefreshCw,
   Search,
   Send,
   Settings2,
@@ -411,6 +412,30 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
   const [copied, setCopied] = useState<string | null>(null)
   const [showToolOutputs, setShowToolOutputs] = useState<boolean>(false)
   const [usage, setUsage] = useState<Usage>({ used: 0, dailyLimit: null, plan: 'Standard Router' })
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false)
+
+  const fetchModels = async (showLoadingState = false) => {
+    if (showLoadingState) setIsRefreshingModels(true)
+    try {
+      const res = await fetch('/api/models')
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data) && data.length > 0) {
+          setModels(data)
+          const curId = activeChat?.model || selectedModel
+          if (!curId || !data.some((m: any) => m.id === curId)) {
+            setSelectedModel(data[0].id)
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to refetch models:', err)
+    } finally {
+      if (showLoadingState) {
+        setTimeout(() => setIsRefreshingModels(false), 600)
+      }
+    }
+  }
 
   // Branching / Editing User Message State
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -1221,24 +1246,47 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
             <strong style={{ fontWeight: 700, fontSize: '15px' }}>SuperChat</strong>
           </div>
           <div className="topbar-spacer" />
-          <div className="model-control">
-            <span className="status-dot" />
-            <select
-              aria-label="Select model"
-              value={activeChat?.model || selectedModel}
-              onFocus={() => {
-                fetch('/api/models')
-                  .then((r) => (r.ok ? r.json() : null))
-                  .then((data) => data && Array.isArray(data) && data.length && setModels(data))
-                  .catch(() => {})
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <div className="model-control">
+              <span className="status-dot" />
+              <select
+                aria-label="Select model"
+                value={activeChat?.model || selectedModel}
+                onFocus={() => fetchModels(false)}
+                onChange={(event) => updateChat({ model: event.target.value })}
+              >
+                {models.map((model) => (
+                  <option key={model.id} value={model.id}>{model.name}</option>
+                ))}
+              </select>
+              <ChevronDown size={15} style={{ pointerEvents: 'none' }} />
+            </div>
+
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => fetchModels(true)}
+              disabled={isRefreshingModels}
+              title="Perbarui daftar model (Refetch models)"
+              aria-label="Perbarui daftar model"
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 0,
               }}
-              onChange={(event) => updateChat({ model: event.target.value })}
             >
-              {models.map((model) => (
-                <option key={model.id} value={model.id}>{model.name}</option>
-              ))}
-            </select>
-            <ChevronDown size={15} style={{ pointerEvents: 'none' }} />
+              <RefreshCw
+                size={14}
+                style={{
+                  animation: isRefreshingModels ? 'spin 0.8s linear infinite' : 'none',
+                  transition: 'transform 0.2s ease',
+                }}
+              />
+            </button>
           </div>
 
           {messages.length > 0 && (

@@ -95,5 +95,14 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json(combined)
+  // Filter out any models disabled by admin
+  let disabledSet = new Set<string>()
+  try {
+    const disabledRows = db.prepare('SELECT model_id as modelId FROM disabled_models').all() as { modelId: string }[]
+    disabledSet = new Set(disabledRows.map((r) => r.modelId.toLowerCase()))
+  } catch {}
+
+  const filtered = combined.filter((m) => !disabledSet.has(m.id.toLowerCase()))
+
+  return NextResponse.json(filtered)
 }

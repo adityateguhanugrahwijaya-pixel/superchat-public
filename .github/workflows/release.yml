@@ -28,21 +28,37 @@ jobs:
       - name: Install Dependencies
         run: npm install --include=optional
 
+      - name: Run Typecheck Validation
+        run: npm run typecheck
+
       - name: Create Release Archives (Full & Update Package)
         run: |
           TAG_NAME="${GITHUB_REF#refs/tags/}"
           FULL_ARCHIVE="superchat-${TAG_NAME}-full.zip"
           UPDATE_ARCHIVE="superchat-${TAG_NAME}-update.zip"
 
-          echo "📦 Packaging Full Release: ${FULL_ARCHIVE}"
-          zip -r "${FULL_ARCHIVE}" . \
-            -x "*.git*" \
-            -x "*.github*" \
-            -x "node_modules/*" \
-            -x ".next/*" \
-            -x "local.db*" \
-            -x ".env.local" \
+          FILTER_EXCLUDES='
+            -x "*.git*"
+            -x "*.github*"
+            -x "node_modules/*"
+            -x ".next/*"
+            -x ".sandbox-venv/*"
+            -x "local.db*"
+            -x ".env.local"
             -x "appconfig.json"
+            -x "chats/*"
+            -x "sandbox/*"
+            -x "docs/*"
+            -x "test/*"
+            -x "*.test.ts"
+            -x "*.spec.ts"
+            -x "NOTES.md"
+            -x "notes.md"
+            -x "AGENT_AND_SANDBOX_SYSTEM.md"
+          '
+
+          echo "📦 Packaging Full Release: ${FULL_ARCHIVE}"
+          zip -r "${FULL_ARCHIVE}" . $FILTER_EXCLUDES
 
           echo "⚡ Generating Update Package & delete.txt..."
           
@@ -50,10 +66,12 @@ jobs:
           PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG_NAME}$" | head -n 1 || true)
           echo "Previous release tag detected: '${PREV_TAG}'"
 
+          FILTER_REGEX="^(\.git|\.github|node_modules|\.next|\.sandbox-venv|local\.db|\.env\.local|appconfig\.json|chats|sandbox|docs|test|.*\.test\.ts|.*\.spec\.ts|NOTES\.md|notes\.md|AGENT_AND_SANDBOX_SYSTEM\.md)"
+
           # Create delete.txt listing deleted files
           if [ -n "${PREV_TAG}" ]; then
             echo "# Files removed in ${TAG_NAME} since ${PREV_TAG}:" > delete.txt
-            git diff --name-only --diff-filter=D "${PREV_TAG}" "${TAG_NAME}" | grep -v "^\.git" | grep -v "^node_modules" | grep -v "^\.next" | grep -v "^local\.db" | grep -v "^\.env\.local" | grep -v "^appconfig\.json" >> delete.txt || true
+            git diff --name-only --diff-filter=D "${PREV_TAG}" "${TAG_NAME}" | grep -v -E "${FILTER_REGEX}" >> delete.txt || true
           else
             echo "# No previous release tag found." > delete.txt
           fi
@@ -62,7 +80,7 @@ jobs:
 
           if [ -n "${PREV_TAG}" ]; then
             echo "Collecting modified and added files since ${PREV_TAG}..."
-            git diff --name-only --diff-filter=AM "${PREV_TAG}" "${TAG_NAME}" | grep -v "^\.git" | grep -v "^node_modules" | grep -v "^\.next" | grep -v "^local\.db" | grep -v "^\.env\.local" | grep -v "^appconfig\.json" | while read -r file; do
+            git diff --name-only --diff-filter=AM "${PREV_TAG}" "${TAG_NAME}" | grep -v -E "${FILTER_REGEX}" | while read -r file; do
               if [ -f "$file" ]; then
                 mkdir -p "update_package/$(dirname "$file")"
                 cp "$file" "update_package/$file"
@@ -70,7 +88,23 @@ jobs:
             done
           else
             echo "No previous tag found; generating source bundle in update package..."
-            rsync -av --exclude="node_modules" --exclude=".git*" --exclude=".github*" --exclude=".next" --exclude="local.db*" --exclude=".env.local" --exclude="appconfig.json" ./ update_package/
+            rsync -av \
+              --exclude="node_modules" \
+              --exclude=".git*" \
+              --exclude=".github*" \
+              --exclude=".next" \
+              --exclude=".sandbox-venv" \
+              --exclude="local.db*" \
+              --exclude=".env.local" \
+              --exclude="appconfig.json" \
+              --exclude="chats" \
+              --exclude="sandbox" \
+              --exclude="docs" \
+              --exclude="test" \
+              --exclude="NOTES.md" \
+              --exclude="notes.md" \
+              --exclude="AGENT_AND_SANDBOX_SYSTEM.md" \
+              ./ update_package/
           fi
 
           # Copy delete.txt into update package
@@ -78,14 +112,7 @@ jobs:
 
           # Create update package zip excluding git/github internal files
           cd update_package
-          zip -r "../${UPDATE_ARCHIVE}" . \
-            -x "*.git*" \
-            -x "*.github*" \
-            -x "node_modules/*" \
-            -x ".next/*" \
-            -x "local.db*" \
-            -x ".env.local" \
-            -x "appconfig.json"
+          zip -r "../${UPDATE_ARCHIVE}" . $FILTER_EXCLUDES
           cd ..
           rm -rf update_package
 

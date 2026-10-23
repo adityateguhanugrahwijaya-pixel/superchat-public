@@ -113,6 +113,12 @@ sqlite.exec(`
     router_url TEXT DEFAULT 'https://router.bynara.id/v1',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS "disabled_models" (
+    model_id TEXT PRIMARY KEY,
+    disabled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    disabled_by TEXT
+  );
 `)
 
 try {

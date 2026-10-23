@@ -19,6 +19,7 @@ appconfig.json
 # Data & local stores
 /chats/
 /sandbox/
+.sandbox-venv/
 local.db
 local.db-shm
 local.db-wal

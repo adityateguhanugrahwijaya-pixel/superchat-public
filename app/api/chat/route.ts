@@ -272,6 +272,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'chatId, content, and model are required' }, { status: 400 })
   }
 
+  // Prevent usage of models disabled by administrator
+  try {
+    const disabled = db.prepare('SELECT 1 FROM disabled_models WHERE LOWER(model_id) = LOWER(?)').get(model)
+    if (disabled) {
+      return NextResponse.json(
+        { error: `Model "${model}" telah dinonaktifkan oleh administrator.` },
+        { status: 403 }
+      )
+    }
+  } catch {}
+
   // Get or create chat file
   let chat = getChat(user.email, chatId)
   if (!chat) {
