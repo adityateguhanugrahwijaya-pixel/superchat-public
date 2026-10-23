@@ -55,6 +55,12 @@ jobs:
             -x "NOTES.md"
             -x "notes.md"
             -x "AGENT_AND_SANDBOX_SYSTEM.md"
+            -x "AGENTS.md"
+            -x "agents.md"
+            -x "CLAUDE.md"
+            -x "claude.md"
+            -x "GEMINI.md"
+            -x "gemini.md"
           '
 
           echo "📦 Packaging Full Release: ${FULL_ARCHIVE}"
@@ -66,7 +72,7 @@ jobs:
           PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG_NAME}$" | head -n 1 || true)
           echo "Previous release tag detected: '${PREV_TAG}'"
 
-          FILTER_REGEX="^(\.git|\.github|node_modules|\.next|\.sandbox-venv|local\.db|\.env\.local|appconfig\.json|chats|sandbox|docs|test|.*\.test\.ts|.*\.spec\.ts|NOTES\.md|notes\.md|AGENT_AND_SANDBOX_SYSTEM\.md)"
+          FILTER_REGEX="^(\.git|\.github|node_modules|\.next|\.sandbox-venv|local\.db|\.env\.local|appconfig\.json|chats|sandbox|docs|test|.*\.test\.ts|.*\.spec\.ts|NOTES\.md|notes\.md|AGENT_AND_SANDBOX_SYSTEM\.md|AGENTS\.md|agents\.md|CLAUDE\.md|claude\.md|GEMINI\.md|gemini\.md)"
 
           # Create delete.txt listing deleted files
           if [ -n "${PREV_TAG}" ]; then

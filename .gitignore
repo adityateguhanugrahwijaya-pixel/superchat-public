@@ -32,6 +32,13 @@ node_modules
 NOTES.md
 notes.md
 AGENT_AND_SANDBOX_SYSTEM.md
+AGENTS.md
+agents.md
+CLAUDE.md
+claude.md
+GEMINI.md
+gemini.md
+*.gemini*
 docs/
 test/
 *.test.ts

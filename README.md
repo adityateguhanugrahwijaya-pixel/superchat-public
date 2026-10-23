@@ -8,24 +8,39 @@
 
 * 🚀 **Universal LLM Router Connection**:
   * Connects to **Bynara AI Router** (`https://router.bynara.id/v1`), **OpenAI**, **DeepSeek**, **OpenRouter**, or local **Ollama** (`http://localhost:11434/v1`).
-  * Live model dropdown selector (`agnes-2.5-flash`, `deepseek-v4-flash`, `deepseek-v4-pro`, etc.).
+  * Live model dropdown selector with 1-click **Refresh Models** button (`agnes-2.5-flash`, `deepseek-v4-flash`, `deepseek-v4-pro`, etc.).
   * Built-in HTTP router error status badges (`429 Rate Limit`, `401 Unauthorized`, `404 Not Found`, `500+`).
+
+* 🤖 **Autonomous Sandbox Agent System**:
+  * Built-in multi-turn tool execution loop (`write_file`, `read_file`, `list_files`, `bash`, `python_run`, `node_run`, `preview_file`, `present_files`).
+  * **Dynamic Agent Trigger**: Standard conversational queries or greetings (e.g. *"halo"*) use clean standard typing/thinking indicators. The agent loop and background runner only activate when the LLM explicitly calls tools.
+  * Isolated per-session workspaces (`sandbox/{userEmail}/{chatId}/`) with automated janitor cleanup.
+
+* 👁️ **Visual File Preview & Interactive Canvas**:
+  * Generate and preview HTML, SVG, Markdown, code, and text directly inside SuperChat.
+  * `preview_file` tool renders HTML/SVG to visual screenshots using headless browser rendering and automatically feeds visual feedback into vision-capable models.
+  * Side-panel in-chat Canvas for live file inspection, copying, and downloading.
+
+* 🛡️ **Admin Workspace & Model Management (`/admin`)**:
+  * Control Room for administrators with system-wide 30-day token analytics and user management.
+  * **Model Toggle & Capability Filter**: Easily disable or enable specific models for all users with iOS-style toggles.
+  * Capability badges indicating Vision (`👁️`), Reasoning (`🧠`), Web Search (`🌐`), and Context Window size.
 
 * 🌿 **Conversation Branching & Message Editing**:
   * Edit any previous user message in the chat stream.
-  * Automatically drops all subsequent messages and resubmits the prompt to generate a fresh AI response from that point.
+  * Automatically drops subsequent messages and resubmits the prompt to generate a fresh AI branch.
 
 * 🎯 **Curated Popular Prompt Presets**:
   * Quick-apply specialized personas (*Senior Software Engineer*, *Deep Reasoning & Logic*, *Concise & Direct*, *Creative Copywriter*, *Academic Researcher*).
   * Accessible from global Settings and the in-chat settings popover.
 
 * 🔒 **Privacy-First Hybrid Storage**:
-  * **SQLite (`local.db`)**: High-speed WAL-mode SQLite database for user authentication, accounts, and system metrics.
+  * **SQLite (`local.db`)**: High-speed WAL-mode SQLite database for user authentication, accounts, disabled models, and system metrics.
   * **Per-User JSON Files (`chats/{email}/{id}.json`)**: Isolated chat history storage per user account for fast backup, reading, and portability.
 
 * 📊 **Real-Time Token Usage Statistics**:
   * Track daily token usage, total lifetime tokens, and 14-day history breakdown in `/settings`.
-  * Dynamic, non-hardcoded token tracking adapted for varied router limits.
+  * Dynamic token tracking adapted for varied router limits.
 
 * 🌐 **Free Web Search Grounding**:
   * Integrated web search powered by Wikipedia & Wikinews APIs with a 1-click toggle.
@@ -33,10 +48,6 @@
 * 👤 **Account & Profile Management**:
   * Change username and password with secure `scrypt` password hashing.
   * Read-only email binding for conversation storage integrity.
-
-* 🛡️ **Admin Workspace (`/admin`)**:
-  * Dedicated Control Room for administrators.
-  * System-wide 30-day usage charts and user account controls (role elevation and account suspension).
 
 * ⚙️ **Automated Admin Account Bootstrap**:
   * Automatically creates or updates the admin account in SQLite on application startup using environment variables (`ADMIN_EMAIL`, `ADMIN_PASSWORD`) or `appconfig.json`.
@@ -172,22 +183,25 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 superchat/
 ├── app/
 │   ├── admin/             # Admin Workspace page & API
-│   ├── api/               # API Routes (chat, chats, usage, user/profile, settings)
+│   ├── api/               # API Routes (chat, chats, usage, models, admin, user/profile, settings)
 │   ├── settings/          # Account & API Router Settings page
 │   ├── sign-in/           # Authentication pages
 │   ├── sign-up/
 │   ├── globals.css        # Core Design System CSS
 │   └── page.tsx           # Home Chat UI Page
 ├── components/
-│   └── superchat.tsx      # Main SuperChat Shell & Conversation Component
+│   └── superchat.tsx      # Main SuperChat Shell, Conversation & In-Chat Canvas
 ├── lib/
+│   ├── agent/             # Autonomous agent loop engine, tool registry & SSE streaming
+│   ├── sandbox/           # Workspace isolation, path resolution & auto-janitor
 │   ├── auth.ts            # BetterAuth configuration
 │   ├── bootstrap-admin.ts # Admin account startup bootstrap utility
 │   ├── chats.ts           # JSON file-based per-user chat store
-│   ├── db.ts              # SQLite database initialization & WAL mode
+│   ├── db.ts              # SQLite database initialization, disabled models & WAL mode
 │   ├── presets.ts         # Popular system prompt presets library
 │   └── websearch.ts       # Wikipedia/Wikinews web search grounding
 ├── chats/                 # Per-user chat storage directory
+├── sandbox/               # Isolated agent sandbox execution workspaces
 ├── example.env.local      # Environment configuration template
 ├── appconfig.json.example # JSON configuration template
 ├── local.db               # SQLite database file

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-10-23
+
+### 🚀 Major Features & Capabilities
+
+* **Autonomous Sandbox Agent System**:
+  * Integrated multi-turn autonomous tool execution engine with native function calling and text fallback parsing.
+  * Supported tools: `write_file`, `read_file`, `list_files`, `bash`, `python_run`, `node_run`, `preview_file`, and `present_files`.
+  * Safe session isolation under `sandbox/{userEmail}/{chatId}/` with retention limits and idle janitor cleanup.
+
+* **Dynamic Agent Trigger**:
+  * Standard conversation queries, reasoning, and greetings (e.g. *"halo"*) use clean conversational typing/thinking UI without activating background agent banners or fake tool cards.
+  * Agent loop mode and background banner only activate when the LLM explicitly executes tools.
+
+* **Visual File Preview & Interactive In-Chat Canvas**:
+  * Added `preview_file` tool to preview HTML, SVG, Markdown, code, and text files.
+  * Headless screenshot rendering for HTML and SVG with automated visual context injection for vision-capable models.
+  * Side-panel in-chat Canvas for syntax-highlighted code inspection, file copy, and download.
+
+* **Admin Model Control Center (`/admin`)**:
+  * Model Management dashboard with live search and capability filters (*Vision*, *Reasoning*, *Web Search*, *Large Context*).
+  * 1-click toggle switches to enable or disable specific models dynamically for all users without restarting the server.
+  * Capability detection badges (`👁️ Vision`, `🧠 Reasoning`, `🌐 Search`, `Context Window`).
+  * 1-click **Refresh Models** button in the chat model selector.
+
+* **Repository & Workflow Hardening**:
+  * Added `.github/workflows/ci.yml` for automated TypeScript verification on push and pull requests.
+  * Hardened `.github/workflows/release.yml` with comprehensive exclusion filters for archives and update bundles.
+  * Untracked AI rule/guideline files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) from git to keep release trees clean.
+
+---
+
 ## [1.0.0] - 2026-09-11
 
 ### 🚀 Major Features & Capabilities
