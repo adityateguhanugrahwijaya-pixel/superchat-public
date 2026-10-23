@@ -221,4 +221,9 @@ superchat/
 
 ## 📝 License
 
-This project is licensed under the MIT License.
+This project is licensed under the **PolyForm Noncommercial License 1.0.0** (Public & Open Source for Non-Commercial Use).
+
+* ✅ **Permitted**: Free personal use, self-hosting, educational learning, research, modification, and community open-source contributions.
+* ❌ **Prohibited**: Selling, reselling, charging access fees, sublicensing, or commercial monetization of this software or its derivative works.
+
+See the [LICENSE](LICENSE) file for complete legal terms.
