@@ -354,6 +354,7 @@ export async function POST(request: NextRequest) {
         `- edit_file: {"tool": "edit_file", "params": {"path": "filename.ext", "target": "old text", "replacement": "new text"}}\n` +
         `- list_dir: {"tool": "list_dir", "params": {"path": "."}} (list directory items)\n` +
         `- delete_file: {"tool": "delete_file", "params": {"path": "filename.ext"}}\n` +
+        `- preview_file: {"tool": "preview_file", "params": {"path": "filename.ext", "pages": "1-3", "mode": "auto"}} (inspects and lints PDF/PPTX/DOCX/image before presenting)\n` +
         `- present_files: {"tool": "present_files", "params": {"files": ["filename.ext"]}} (presents final file card(s) to user)\n\n` +
         `2. RELATIVE PATHS ONLY:\n` +
         `- Always create and write files using simple relative filenames in the current directory (e.g. "proposal.pdf" or "app.py").\n` +
@@ -362,7 +363,9 @@ export async function POST(request: NextRequest) {
         `- When creating files, scripts, documents, or running code: FIRST call write_file, run_python, run_node, or execute_command.\n` +
         `- If a tool execution fails or returns an error (e.g., SyntaxError, Missing Module), inspect the error output, fix your code, or run missing setup commands, and call the tool again.\n` +
         `- Continue iterating autonomously in a loop until the file or code runs cleanly.\n\n` +
-        `4. FILE REFERENCING (<file path="...">Title</file>):\n` +
+        `4. PREVIEW & PRESENTATION WORKFLOW:\n` +
+        `- Setelah membuat PDF/PPTX/DOCX/gambar untuk user, panggil preview_file. Jika ada teks terpotong, tumpang tindih, kotak/glyph hilang, atau halaman kosong, perbaiki dan preview ulang (maksimal 2 putaran), baru present_files. present_files tetap berjalan tanpa preview, tapi hasilnya menyertakan catatan jika file belum di-preview.\n\n` +
+        `5. FILE REFERENCING (<file path="...">Title</file>):\n` +
         `- Markdown code blocks: Use standard \`\`\`python ... \`\`\` for showing code directly in chat text.\n` +
         `- <file path="filename.ext">Display Title</file>: The <file> tag is STRICTLY a reference card to point to an ACTUAL existing file in the sandbox workspace.\n` +
         `- STRICT 5-WORD LIMIT: The title inside <file> tag MUST BE 5 WORDS OR FEWER (e.g. <file path="app.py">Main Script</file>). NEVER place code, script contents, or text longer than 5 words inside <file> tags. Titles exceeding 5 words will be automatically rejected and sanitized.\n` +

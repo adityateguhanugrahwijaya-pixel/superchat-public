@@ -24,6 +24,7 @@ const KNOWN_TOOLS = new Set([
   'list_dir',
   'delete_file',
   'present_files',
+  'preview_file',
 ])
 
 function extractToolAndParams(data: any): ParsedToolCall | null {

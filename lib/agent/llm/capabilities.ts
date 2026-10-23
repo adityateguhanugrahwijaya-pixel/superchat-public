@@ -201,7 +201,35 @@ export async function getModelCapabilities(
     }
   }
 
-  // 3. Default to 'native' tool calling (engine dynamically falls back to 'text' on error and caches)
+  // 3. Auto-detect vision support from metadata or router /models endpoint
+  let isVision = Boolean(modelMetadata?.vision)
+  let contextWin = modelMetadata?.context_window || DEFAULT_CAPABILITIES.contextWindow
+
+  if (!modelMetadata && apiKey && routerUrl.includes('/v1/')) {
+    try {
+      const modelsUrl = routerUrl.replace(/\/chat\/completions\/?$/, '/models')
+      const mRes = await fetch(modelsUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(4000),
+      })
+      if (mRes.ok) {
+        const mData: any = await mRes.json()
+        const list = Array.isArray(mData) ? mData : Array.isArray(mData.data) ? mData.data : []
+        const found = list.find((m: any) => m.id === model)
+        if (found) {
+          if (found.vision !== undefined) isVision = Boolean(found.vision)
+          if (found.context_window) contextWin = found.context_window
+        }
+      }
+    } catch {}
+  }
+
+  // Known fallback heuristics if router models endpoint was unreachable
+  if (!isVision && (model.startsWith('agnes-') || model.includes('vision') || model.startsWith('gemini-') || model.startsWith('gpt-6'))) {
+    isVision = true
+  }
+
+  // 4. Default to 'native' tool calling (engine dynamically falls back to 'text' on error and caches)
   const shouldProbe = process.env.AGENT_PROBE_TOOLS === 'true'
   const supportsNative = shouldProbe && apiKey
     ? await probeNativeTools(routerUrl, model, apiKey)
@@ -210,8 +238,8 @@ export async function getModelCapabilities(
   const resolved: ModelCapabilities = {
     toolMode: supportsNative ? 'native' : 'text',
     systemRole: 'system',
-    contextWindow: Math.min(modelMetadata?.context_window || DEFAULT_CAPABILITIES.contextWindow, MAX_CONTEXT_CAP),
-    supportsVision: Boolean(modelMetadata?.vision),
+    contextWindow: Math.min(contextWin, MAX_CONTEXT_CAP),
+    supportsVision: isVision,
     supportsUsage: true,
   }
 

@@ -5,11 +5,14 @@
  *   node scripts/setup-sandbox.js            # normal: only does something if the sandbox is enabled
  *   node scripts/setup-sandbox.js --yes      # never ask questions, accept defaults
  *   node scripts/setup-sandbox.js --force    # run even if the sandbox is disabled in the config
+ *   node scripts/setup-sandbox.js --doc-tools-only   # only check/install the document preview tools
  *
  * What it does when the sandbox is enabled:
  *   1. Checks that Python 3.9+ is installed. If not, shows how to install it and waits.
  *   2. Creates a virtual environment in ./.sandbox-venv (so system Python is never touched).
  *   3. Installs the packages listed in ./sandbox-requirements.txt (asks first).
+ *   4. Checks the document preview tools used by the preview_file agent tool:
+ *      poppler (pdftoppm, pdftotext) and optionally LibreOffice (soffice), and offers to install them.
  *
  * If PYTHON_BIN is set (e.g. your own conda/venv clone), it only verifies that interpreter
  * and leaves your environment alone.
@@ -32,6 +35,7 @@ const MIN_PY = [3, 9]
 const flags = new Set(process.argv.slice(2))
 const ASSUME_YES = flags.has('--yes') || flags.has('-y')
 const FORCE = flags.has('--force')
+const DOC_TOOLS_ONLY = flags.has('--doc-tools-only')
 const INTERACTIVE = Boolean(process.stdin.isTTY && process.stdout.isTTY) && !ASSUME_YES
 
 // ---------------------------------------------------------------------------
@@ -268,11 +272,121 @@ async function ensurePackages(vpy) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Document preview tools (poppler: pdftoppm/pdftotext, optional LibreOffice)
+// Used by the agent tool preview_file to render PDF/PPTX/DOCX pages.
+// ---------------------------------------------------------------------------
+function hasCommand(name) {
+  const exts = IS_WIN ? ['.exe', '.cmd', '.bat', ''] : ['']
+  const dirs = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean)
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      try {
+        const full = path.join(dir, name + ext)
+        if (fs.statSync(full).isFile()) return true
+      } catch {}
+    }
+  }
+  return false
+}
+
+function detectPlatform() {
+  if (IS_WIN) return 'windows'
+  if (process.platform === 'darwin') return 'mac'
+  if ((process.env.PREFIX || '').includes('com.termux')) return 'termux'
+  try {
+    const osr = fs.readFileSync('/etc/os-release', 'utf8')
+    const distro = (((osr.match(/^ID=(.*)$/m) || [])[1] || '') + ' ' + ((osr.match(/^ID_LIKE=(.*)$/m) || [])[1] || ''))
+      .replace(/"/g, '')
+      .toLowerCase()
+    if (/debian|ubuntu|mint|pop/.test(distro)) return 'debian'
+    if (/fedora|rhel|centos|rocky|alma/.test(distro)) return 'fedora'
+    if (/arch|manjaro/.test(distro)) return 'arch'
+    if (/alpine/.test(distro)) return 'alpine'
+  } catch {}
+  return 'linux'
+}
+
+/** Install commands per platform: [command, args] (run without a shell) plus a printable hint. */
+function docToolInstallPlan(platform) {
+  const plans = {
+    termux: { poppler: ['pkg', ['install', '-y', 'poppler']], office: null, officeHint: 'LibreOffice is not packaged for Termux; PPTX/DOCX will use text lint only.' },
+    mac: { poppler: ['brew', ['install', 'poppler']], office: ['brew', ['install', '--cask', 'libreoffice']] },
+    debian: { poppler: ['sudo', ['apt-get', 'install', '-y', 'poppler-utils']], office: ['sudo', ['apt-get', 'install', '-y', 'libreoffice-writer', 'libreoffice-impress']] },
+    fedora: { poppler: ['sudo', ['dnf', 'install', '-y', 'poppler-utils']], office: ['sudo', ['dnf', 'install', '-y', 'libreoffice-writer', 'libreoffice-impress']] },
+    arch: { poppler: ['sudo', ['pacman', '-S', '--noconfirm', 'poppler']], office: ['sudo', ['pacman', '-S', '--noconfirm', 'libreoffice-fresh']] },
+    alpine: { poppler: ['sudo', ['apk', 'add', 'poppler-utils']], office: ['sudo', ['apk', 'add', 'libreoffice']] },
+    windows: { poppler: ['winget', ['install', '-e', '--id', 'oschwartz10612.Poppler']], office: ['winget', ['install', '-e', '--id', 'TheDocumentFoundation.LibreOffice']] },
+    linux: { poppler: null, office: null, popplerHint: 'Install "poppler-utils" (pdftoppm, pdftotext) with your package manager.' },
+  }
+  return plans[platform] || plans.linux
+}
+
+const printable = (plan) => (plan ? [plan[0], ...plan[1]].join(' ') : '')
+
+async function offerInstall(label, plan, hint) {
+  if (!plan) {
+    if (hint) log(`    ${hint}`)
+    return false
+  }
+  log(`    Install command: ${printable(plan)}`)
+  if (!INTERACTIVE && !ASSUME_YES) {
+    log('    (Not installing automatically in non-interactive mode. Run the command above, or re-run with --yes.)')
+    return false
+  }
+  const answer = await ask(`    Install ${label} now? [Y/n]: `, 'y')
+  if (/^n/i.test(answer.trim())) {
+    warn(`Skipped ${label}. Run the command above any time to enable it.`)
+    return false
+  }
+  if (!hasCommand(plan[0])) {
+    warn(`"${plan[0]}" is not available on this system. Run the install command manually.`)
+    return false
+  }
+  const r = spawnSync(plan[0], plan[1], { stdio: 'inherit' })
+  return r.status === 0
+}
+
+async function ensureDocPreviewTools() {
+  log('')
+  log('--- Document preview tools (used by the preview_file agent tool) ---')
+  const platform = detectPlatform()
+  const plan = docToolInstallPlan(platform)
+
+  const popplerReady = () => hasCommand('pdftoppm') && hasCommand('pdftotext')
+  if (popplerReady()) {
+    ok('poppler found (pdftoppm, pdftotext): PDF pages can be rendered and linted.')
+  } else {
+    warn('poppler (pdftoppm/pdftotext) is not installed. The agent cannot render PDF previews without it.')
+    const installed = await offerInstall('poppler', plan.poppler, plan.popplerHint)
+    if (installed && popplerReady()) ok('poppler installed.')
+    else if (!popplerReady()) warn('Continuing without poppler. preview_file will fall back to a limited text lint.')
+  }
+
+  const officeReady = () => hasCommand('soffice') || hasCommand('libreoffice')
+  if (officeReady()) {
+    ok('LibreOffice found (soffice): PPTX/DOCX files can be previewed visually.')
+  } else {
+    log('[i]  LibreOffice (soffice) not found (optional). PPTX/DOCX previews will use text lint only.')
+    if (plan.officeHint) {
+      log(`    ${plan.officeHint}`)
+    } else if (plan.office) {
+      log(`    To enable visual PPTX/DOCX previews later run: ${printable(plan.office)}`)
+    }
+  }
+}
+
 async function main() {
   const envLocal = readEnvFile(path.join(ROOT, '.env.local'))
 
   if (!FORCE && !isSandboxEnabled(envLocal)) {
     log('Sandbox is disabled in your config, skipping Python setup.')
+    return
+  }
+
+  if (DOC_TOOLS_ONLY) {
+    await ensureDocPreviewTools()
+    log('')
     return
   }
 
@@ -289,16 +403,17 @@ async function main() {
       fail(`PYTHON_BIN is set to "${custom}" but that interpreter could not be run.`)
       log('    Fix the path in .env.local, or remove PYTHON_BIN to use the built-in sandbox environment.')
     }
+    await ensureDocPreviewTools()
     return
   }
 
   const systemPython = await ensurePython()
-  if (!systemPython) return
+  if (systemPython) {
+    const vpy = await ensureVenv(systemPython)
+    if (vpy) await ensurePackages(vpy)
+  }
 
-  const vpy = await ensureVenv(systemPython)
-  if (!vpy) return
-
-  await ensurePackages(vpy)
+  await ensureDocPreviewTools()
   log('')
 }
 

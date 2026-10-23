@@ -10,6 +10,8 @@ export type ToolExecutionResult = {
   presentedFiles?: Array<{ path: string; title: string }>
   requiresApproval?: boolean
   approvalReason?: string
+  previewImagePath?: string
+  previewDataUrl?: string
 }
 
 /**
@@ -34,5 +36,7 @@ export async function executeSandboxTool(
     presentedFiles: res.presentedFiles,
     requiresApproval: res.requiresApproval,
     approvalReason: res.approvalReason,
+    previewImagePath: res.previewImagePath,
+    previewDataUrl: res.previewDataUrl,
   }
 }

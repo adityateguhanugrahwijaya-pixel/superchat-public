@@ -97,17 +97,66 @@ export async function* runAgent(
     const sysText =
       baseMessages
         .filter((m) => m.role === 'system')
-        .map((m) => m.content)
+        .map((m) => (typeof m.content === 'string' ? m.content : ''))
         .filter(Boolean)
         .join('\n\n') || combinedSystemPrompt
     const rest = baseMessages.filter((m) => m.role !== 'system').map((m) => ({ ...m }))
 
+    // Preview image context pruning: find all synthetic preview messages
+    const previewIndices: number[] = []
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i].isPreviewSynthetic) {
+        previewIndices.push(i)
+      }
+    }
+
+    if (previewIndices.length > 0) {
+      const lastPreviewIdx = previewIndices[previewIndices.length - 1]
+      for (const idx of previewIndices) {
+        if (idx === lastPreviewIdx && caps.supportsVision) {
+          const filePath = rest[idx].previewFilePath
+          if (filePath && fs.existsSync(filePath)) {
+            try {
+              const mime = filePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
+              const b64 = fs.readFileSync(filePath).toString('base64')
+              const dataUrl = `data:${mime};base64,${b64}`
+              const target = rest[idx].previewTarget || 'file'
+              rest[idx] = {
+                role: 'user',
+                content: [
+                  { type: 'text', text: `Hasil preview ${target}` },
+                  { type: 'image_url', image_url: { url: dataUrl } },
+                ],
+              }
+            } catch {
+              rest[idx] = {
+                role: 'user',
+                content: '[gambar preview dihapus]',
+              }
+            }
+          } else {
+            rest[idx] = {
+              role: 'user',
+              content: '[gambar preview dihapus]',
+            }
+          }
+        } else {
+          // Earlier preview or vision not supported: replace with stub
+          rest[idx] = {
+            role: 'user',
+            content: '[gambar preview dihapus]',
+          }
+        }
+      }
+    }
+
     if (systemRole === 'user-prefix') {
       const firstUserIdx = rest.findIndex((m) => m.role === 'user')
       if (firstUserIdx !== -1 && sysText) {
+        const origContent = typeof rest[firstUserIdx].content === 'string' ? rest[firstUserIdx].content : ''
         rest[firstUserIdx] = {
           ...rest[firstUserIdx],
-          content: `<instructions>\n${sysText}\n</instructions>\n\n${rest[firstUserIdx].content}`,
+          content: `<instructions>\n${sysText}\n</instructions>\n\n${origContent}`,
         }
       }
       return rest
@@ -408,8 +457,13 @@ export async function* runAgent(
           const toolResult = await executeSandboxTool(userEmail, chatId, toolName, params, signal)
           const durationMs = Date.now() - toolStart
 
+          let toolResultOutput = toolResult.output || ''
+          if (toolName === 'preview_file' && !caps.supportsVision) {
+            toolResultOutput += '\n\npreview visual tidak tersedia untuk model ini'
+          }
+
           const status = toolResult.success ? 'success' : 'failed'
-          const outputSnippet = (toolResult.output || toolResult.error || 'Command executed successfully.').trim()
+          const outputSnippet = (toolResultOutput || toolResult.error || 'Command executed successfully.').trim()
 
           recordedToolCalls[callIdx] = {
             id: toolId,
@@ -483,12 +537,32 @@ export async function* runAgent(
               role: 'tool',
               tool_call_id: call.id,
               name: toolName,
-              content: `Status: ${toolResult.success ? 'SUCCESS' : 'FAILED'}\nOutput:\n${toolResult.output || '(none)'}\nError:\n${toolResult.error || 'none'}${fileNotice}\n\nGuidance: Review the tool result above. If an error occurred or script failed, fix the code and call the next tool. If complete, summarize your work and display the file reference card <file path="filename.ext">Display Title</file>.`,
+              content: `Status: ${toolResult.success ? 'SUCCESS' : 'FAILED'}\nOutput:\n${toolResultOutput || '(none)'}\nError:\n${toolResult.error || 'none'}${fileNotice}\n\nGuidance: Review the tool result above. If an error occurred or script failed, fix the code and call the next tool. If complete, summarize your work and display the file reference card <file path="filename.ext">Display Title</file>.`,
             })
           } else {
             apiMessages.push({
               role: 'user',
-              content: `[System Tool Execution Feedback]\nTool: ${toolName}\nStatus: ${toolResult.success ? 'SUCCESS' : 'FAILED'}\nOutput:\n${toolResult.output || '(none)'}\nError:\n${toolResult.error || 'none'}${fileNotice}\n\nReview the tool result above. If an error occurred or script failed, fix the code and call the next tool. If complete, summarize your work and display the file reference card <file path="filename.ext">Display Title</file>.`,
+              content: `[System Tool Execution Feedback]\nTool: ${toolName}\nStatus: ${toolResult.success ? 'SUCCESS' : 'FAILED'}\nOutput:\n${toolResultOutput || '(none)'}\nError:\n${toolResult.error || 'none'}${fileNotice}\n\nReview the tool result above. If an error occurred or script failed, fix the code and call the next tool. If complete, summarize your work and display the file reference card <file path="filename.ext">Display Title</file>.`,
+            })
+          }
+
+          // Requirement 3: For preview_file with vision capability, append synthetic user message immediately after tool result
+          if (
+            toolName === 'preview_file' &&
+            toolResult.success &&
+            toolResult.previewImagePath &&
+            fs.existsSync(toolResult.previewImagePath) &&
+            caps.supportsVision
+          ) {
+            apiMessages.push({
+              role: 'user',
+              content: [
+                { type: 'text', text: `Hasil preview ${params.path || 'file'}` },
+                { type: 'image_url', image_url: { url: toolResult.previewImagePath } },
+              ],
+              isPreviewSynthetic: true,
+              previewFilePath: toolResult.previewImagePath,
+              previewTarget: params.path || 'file',
             })
           }
         }

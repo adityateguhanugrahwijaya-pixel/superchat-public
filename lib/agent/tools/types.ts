@@ -39,6 +39,8 @@ export interface ToolResult {
   presentedFiles?: PresentedFile[]
   requiresApproval?: boolean
   approvalReason?: string
+  previewImagePath?: string
+  previewDataUrl?: string
 }
 
 export interface ToolDefinition {

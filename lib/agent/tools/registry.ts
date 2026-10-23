@@ -6,6 +6,7 @@ import { pythonTool } from './python'
 import { nodeTool } from './node'
 import { readFileTool, writeFileTool, editFileTool, listDirTool, deleteFileTool } from './fs'
 import { presentFilesTool } from './present'
+import { previewFileTool } from './preview'
 
 class ToolRegistry {
   private toolsByName = new Map<string, ToolDefinition>()
@@ -124,6 +125,7 @@ toolRegistry.register(editFileTool)
 toolRegistry.register(listDirTool)
 toolRegistry.register(deleteFileTool)
 toolRegistry.register(presentFilesTool)
+toolRegistry.register(previewFileTool)
 
 export const executeTool = toolRegistry.execute.bind(toolRegistry)
 export const getTool = toolRegistry.get.bind(toolRegistry)

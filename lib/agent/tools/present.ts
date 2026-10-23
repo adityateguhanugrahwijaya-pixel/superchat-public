@@ -102,9 +102,33 @@ export const presentFilesTool: ToolDefinition = {
       }
     }
 
-    const summary =
+    let summary =
       `Successfully presented ${presented.length} file(s) to the user:\n` +
       presented.map((p) => `- ${p.path} ("${p.title}")`).join('\n')
+
+    // Check if any presented document or image files have not been previewed
+    try {
+      const previewMetaPath = path.join(sessionDir, '.agent', 'preview', '.previewed.json')
+      let previewedMap: Record<string, any> = {}
+      if (fs.existsSync(previewMetaPath)) {
+        try {
+          previewedMap = JSON.parse(fs.readFileSync(previewMetaPath, 'utf-8'))
+        } catch {}
+      }
+
+      const previewableExts = new Set(['.pdf', '.pptx', '.docx', '.png', '.jpg', '.jpeg', '.webp'])
+      const unpreviewed = presented.filter((p) => {
+        const ext = path.extname(p.path).toLowerCase()
+        return previewableExts.has(ext) && !previewedMap[p.path]
+      })
+
+      if (unpreviewed.length > 0) {
+        summary +=
+          `\n\nCatatan: File berikut belum di-preview dengan tool preview_file:\n` +
+          unpreviewed.map((f) => `- ${f.path}`).join('\n') +
+          `\nDisarankan memanggil preview_file untuk memeriksa tata letak dan kualitas sebelum present_files.`
+      }
+    } catch {}
 
     return {
       success: true,

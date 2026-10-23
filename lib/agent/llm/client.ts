@@ -4,12 +4,19 @@
  * AbortSignal propagation, reasoning delta separation, and usage calculation.
  */
 
+export type LLMMessageContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: string } }
+
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  content: string | LLMMessageContentPart[]
   name?: string
   tool_call_id?: string
   tool_calls?: any[]
+  isPreviewSynthetic?: boolean
+  previewFilePath?: string
+  previewTarget?: string
 }
 
 export interface LLMStreamChunk {
@@ -214,7 +221,16 @@ export async function* streamChatCompletions(
 
       // If router didn't include usage, compute estimated tokens
       if (!reportedUsage) {
-        const promptChars = messages.reduce((acc, m) => acc + (m.content?.length || 0), 0)
+        const promptChars = messages.reduce(
+          (acc, m) =>
+            acc +
+            (typeof m.content === 'string'
+              ? m.content.length
+              : Array.isArray(m.content)
+              ? m.content.reduce((sum, p) => sum + (p.type === 'text' ? p.text?.length || 0 : 500), 0)
+              : 0),
+          0
+        )
         yield {
           token: '',
           usage: {
