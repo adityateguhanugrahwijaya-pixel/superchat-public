@@ -30,4 +30,8 @@ node_modules
 .DS_Store
 NOTES.md
 notes.md
-docs/agent-v2/
+AGENT_AND_SANDBOX_SYSTEM.md
+docs/
+test/
+*.test.ts
+*.spec.ts

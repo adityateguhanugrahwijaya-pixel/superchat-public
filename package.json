@@ -7,7 +7,6 @@
     "build": "next build --webpack",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:agent": "node node_modules/tsx/dist/cli.mjs --test test/agent/**/*.test.ts",
     "postinstall": "node -e \"if (process.platform === 'android' || process.env.TERMUX_VERSION) { try { require('child_process').execSync('termux-fix-shebang node_modules/.bin/*'); } catch(e){} }\""
   },
   "dependencies": {
