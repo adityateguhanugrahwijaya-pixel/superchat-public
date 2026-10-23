@@ -168,7 +168,8 @@ function parseToolCallsAndCleanContent(rawText: string) {
   if (!rawText) return { cleanText: '', toolCalls: [] }
 
   const execRegex = />?\s*🛠️\s*\*\*Executing Tool:\*\*\s*`?([a-zA-Z0-9_.-]+)`?(?:\.\.\.)?/gi
-  const outputRegex = />?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```([\s\S]*)```|([^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*))?/i
+  // Unclosed fence in slice is treated as output until the end of slice (i.e. until the next tool marker or <file> tag)
+  const outputRegex = />?\s*(?:✅|❌)\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*\s*[\r\n]*(?:```([\s\S]*?)(?:```|$)|([^\r\n]+(?:[\r\n]+(?![#\w]|>|\n\n)[^\r\n]+)*))?/i
 
   // 1. Locate all execution markers
   const execs: Array<{ toolName: string; index: number; endIndex: number }> = []

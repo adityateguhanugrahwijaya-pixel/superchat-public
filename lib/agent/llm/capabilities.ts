@@ -201,11 +201,11 @@ export async function getModelCapabilities(
     }
   }
 
-  // 3. Probe test (if AGENT_PROBE_TOOLS=true) or safe text fallback (matching system prompt)
+  // 3. Default to 'native' tool calling (engine dynamically falls back to 'text' on error and caches)
   const shouldProbe = process.env.AGENT_PROBE_TOOLS === 'true'
   const supportsNative = shouldProbe && apiKey
     ? await probeNativeTools(routerUrl, model, apiKey)
-    : false
+    : true
 
   const resolved: ModelCapabilities = {
     toolMode: supportsNative ? 'native' : 'text',

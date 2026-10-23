@@ -180,20 +180,28 @@ export function parseToolCallJson(rawStr: string): ParsedToolCall[] {
     }
   } catch {}
 
-  // Attempt 3: Regex fallback extraction
+      // Attempt 3: Regex fallback extraction (decode JSON escapes so \\n / \\" are not left raw)
   try {
     const toolMatch = trimmed.match(/["']?(?:tool|name|action)["']?\s*:\s*["']([^"']+)["']/i)
     if (toolMatch) {
       const tool = toolMatch[1].trim()
       const codeMatch = trimmed.match(/["']?(?:code|script|content|command)["']?\s*:\s*["']([\s\S]*?)(?:["']\s*[,}]|$)/i)
       const pathMatch = trimmed.match(/["']?(?:path|filename|filepath|file)["']?\s*:\s*["']([^"']+)["']/i)
+      const unescapeRegexCapture = (val: string) =>
+        val
+          .replace(/\\n/g, '\n')
+          .replace(/\\r/g, '\r')
+          .replace(/\\t/g, '\t')
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, '\\')
+      const rawBody = codeMatch ? unescapeRegexCapture(codeMatch[1]) : ''
       return [
         {
           tool,
           params: {
-            code: codeMatch ? codeMatch[1] : '',
-            command: codeMatch ? codeMatch[1] : '',
-            content: codeMatch ? codeMatch[1] : '',
+            code: rawBody,
+            command: rawBody,
+            content: rawBody,
             path: pathMatch ? pathMatch[1] : '',
           },
         },
@@ -426,6 +434,20 @@ export function cleanAssistantContent(rawText: string): string {
     }
 
     if (inOutputBlock) {
+      // If a new Executing Tool or <file> tag appears while fence is still open (unclosed fence), close output block
+      if (/^>?\s*🛠️\s*\*\*Executing Tool:\*\*/i.test(trimmed)) {
+        inOutputBlock = false
+        fenceLevel = 0
+        skipUntilEmptyOrMarker = true
+        continue
+      }
+      if (trimmed.startsWith('<file')) {
+        inOutputBlock = false
+        fenceLevel = 0
+        keptLines.push(line)
+        continue
+      }
+
       if (trimmed.startsWith('```')) {
         if (fenceLevel === 0) {
           // Opening fence of output block
@@ -445,7 +467,7 @@ export function cleanAssistantContent(rawText: string): string {
       }
 
       if (fenceLevel > 0) {
-        // Inside fenced output block, skip line
+        // Inside fenced output block (even if unclosed until EOF), skip line
         continue
       }
 
@@ -475,5 +497,13 @@ export function cleanAssistantContent(rawText: string): string {
     keptLines.push(line)
   }
 
-  return keptLines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  const joined = keptLines
+    .join('\n')
+    // Backup: strip any residual Executing Tool or Output / Execution Error markers before saving
+    .replace(/^>?\s*🛠️\s*\*\*Executing Tool:\*\*[^\r\n]*$/gim, '')
+    .replace(/^>?\s*(?:✅|❌)?\s*\*\*(?:Output|Command executed successfully\.|Execution Error|Error):\*\*[\s\S]*?(?:```|$)/gim, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  return joined
 }

@@ -21,8 +21,11 @@ export function encodeLegacyEvent(event: AgentEvent): string {
     case 'tool-result': {
       const icon = event.ok ? '✅' : '❌'
       const header = event.ok ? 'Output' : 'Execution Error'
-      const snippet = (event.output || 'Command executed successfully.').trim()
-      return `\n> ${icon} **${header}:**\n\`\`\`\n${snippet.slice(0, 4000)}\n\`\`\`\n\n`
+      const rawOutput = (event.output || 'Command executed successfully.').trim()
+      const isTruncated = Boolean(event.truncated) || rawOutput.length > 4000
+      const sliced = rawOutput.slice(0, 4000).replace(/`{3,}/g, (m) => m.split('').join('\u200b'))
+      const body = isTruncated ? `${sliced}\n[dipotong]` : sliced
+      return `\n> ${icon} **${header}:**\n\`\`\`\n${body}\n\`\`\`\n\n`
     }
 
     case 'file':

@@ -131,7 +131,14 @@ export const writeFileTool: ToolDefinition = {
   execute: async (context: ToolContext, args: { path: string; content: string }): Promise<ToolResult> => {
     const { userEmail, chatId, sessionDir } = context
     const reqPath = String(args.path || '').trim()
-    const content = String(args.content ?? '')
+    let content = String(args.content ?? '')
+
+    // If content has no real newline, contains >= 2 literal "\n", and length > 60, decode escaped sequences
+    if (!content.includes('\n') && content.length > 60 && (content.match(/\\n/g) || []).length >= 2) {
+      content = content.replace(/\\(\\|n|r|t|")/g, (_m, c) =>
+        c === 'n' ? '\n' : c === 'r' ? '\r' : c === 't' ? '\t' : c === '"' ? '"' : '\\'
+      )
+    }
 
     if (!reqPath) {
       return { success: false, output: 'Error: path parameter is required for write_file.', error: 'Empty path' }

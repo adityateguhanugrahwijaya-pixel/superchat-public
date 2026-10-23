@@ -179,17 +179,22 @@ function parseToolCallJson(rawStr: string): { tool?: string; params?: Record<str
       }
     }
 
-    const toolMatch = trimmed.match(/["']?(?:tool|name|action)["']?\s*:\s*["']([^"']+)["']/i)
+      const toolMatch = trimmed.match(/["']?(?:tool|name|action)["']?\s*:\s*["']([^"']+)["']/i)
     if (toolMatch) {
       const tool = toolMatch[1].trim()
       const codeMatch = trimmed.match(/["']?(?:code|script|content|command)["']?\s*:\s*["']([\s\S]*?)(?:["']\s*[,}]|$)/i)
       const pathMatch = trimmed.match(/["']?(?:path|filename|filepath|file)["']?\s*:\s*["']([^"']+)["']/i)
+      const rawBody = codeMatch
+        ? codeMatch[1].replace(/\\(\\|n|r|t|")/g, (_m, c) =>
+            c === 'n' ? '\n' : c === 'r' ? '\r' : c === 't' ? '\t' : c === '"' ? '"' : '\\'
+          )
+        : ''
       return {
         tool,
         params: {
-          code: codeMatch ? codeMatch[1] : '',
-          command: codeMatch ? codeMatch[1] : '',
-          content: codeMatch ? codeMatch[1] : '',
+          code: rawBody,
+          command: rawBody,
+          content: rawBody,
           path: pathMatch ? pathMatch[1] : '',
         },
       }
