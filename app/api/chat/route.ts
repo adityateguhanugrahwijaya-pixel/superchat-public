@@ -415,14 +415,18 @@ export async function POST(request: NextRequest) {
   }
   chat.messages.push(userMsg)
 
-  // Add initial assistant message placeholder
+  // Add initial assistant message placeholder (schema: 2 for structured prose + toolCalls + files)
   const assistantMsgId = crypto.randomUUID()
   const assistantMsg: MessageItem = {
     id: assistantMsgId,
+    schema: 2,
     role: 'assistant',
     content: '',
+    toolCalls: [],
+    files: [],
     createdAt: new Date().toISOString(),
   }
+  chat.schema = 2
   chat.messages.push(assistantMsg)
   chat.isAgentRunning = sandboxActive
   chat.activity = 'thinking'
@@ -440,8 +444,12 @@ export async function POST(request: NextRequest) {
   const useV2Engine = process.env.AGENT_ENGINE !== 'legacy'
 
   if (useV2Engine) {
+    const streamFormat = (process.env.STREAM_FORMAT || 'sse').toLowerCase()
+    const isSSEFormat = streamFormat === 'sse'
+
     let finalAssistantText = ''
-    let recordedToolCalls: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }> = []
+    let recordedToolCalls: Array<{ id?: string; toolName: string; status: 'running' | 'success' | 'failed'; output?: string }> = []
+    let recordedFiles: Array<{ path: string; title: string }> = []
     let finalRunStatus: { state: 'running' | 'completed' | 'failed'; code?: string; userMessage?: string; detail?: string } | null = {
       state: 'running',
     }
@@ -465,15 +473,23 @@ export async function POST(request: NextRequest) {
       onProgressSave: async (text, toolCalls, meta) => {
         finalAssistantText = text
         recordedToolCalls = [...toolCalls]
+        if (meta?.files) {
+          recordedFiles = [...meta.files]
+        }
         if (meta?.runStatus !== undefined) {
           finalRunStatus = meta.runStatus
         }
         const liveChat = getChat(user.email, chatId)
         if (liveChat) {
+          liveChat.schema = 2
           const idx = liveChat.messages.findIndex((m) => m.id === assistantMsgId)
           if (idx !== -1) {
+            liveChat.messages[idx].schema = 2
             liveChat.messages[idx].toolCalls = [...toolCalls]
-            liveChat.messages[idx].content = cleanAssistantContent(text)
+            if (recordedFiles.length > 0) {
+              liveChat.messages[idx].files = [...recordedFiles]
+            }
+            liveChat.messages[idx].content = isSSEFormat ? text.trim() : cleanAssistantContent(text)
             if (meta?.runStatus !== undefined) {
               liveChat.messages[idx].runStatus = meta.runStatus
             }
@@ -497,9 +513,14 @@ export async function POST(request: NextRequest) {
             promptTokens = event.promptTokens
             completionTokens = event.completionTokens
           } else if (event.type === 'file') {
-            const fileTag = `<file path="${event.path}">${event.title}</file>`
-            if (!finalAssistantText.includes(fileTag)) {
-              finalAssistantText += `\n${fileTag}`
+            if (!recordedFiles.some((f) => f.path === event.path)) {
+              recordedFiles.push({ path: event.path, title: event.title })
+            }
+            if (!isSSEFormat) {
+              const fileTag = `<file path="${event.path}">${event.title}</file>`
+              if (!finalAssistantText.includes(fileTag)) {
+                finalAssistantText += `\n${fileTag}`
+              }
             }
           } else if (event.type === 'error') {
             finalRunStatus = {
@@ -515,14 +536,19 @@ export async function POST(request: NextRequest) {
         try {
           const finalChat = getChat(user.email, chatId)
           if (finalChat) {
+            finalChat.schema = 2
             const idx = finalChat.messages.findIndex((m) => m.id === assistantMsgId)
-            const cleaned = cleanAssistantContent(finalAssistantText)
+            const cleaned = isSSEFormat ? finalAssistantText.trim() : cleanAssistantContent(finalAssistantText)
             const resolvedStatus =
               finalRunStatus?.state === 'running' ? { state: 'completed' as const } : finalRunStatus
             if (idx !== -1) {
+              finalChat.messages[idx].schema = 2
               finalChat.messages[idx].content = cleaned
               if (recordedToolCalls.length > 0) {
                 finalChat.messages[idx].toolCalls = [...recordedToolCalls]
+              }
+              if (recordedFiles.length > 0) {
+                finalChat.messages[idx].files = [...recordedFiles]
               }
               finalChat.messages[idx].runStatus = resolvedStatus
             }
@@ -546,8 +572,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const streamFormat = (process.env.STREAM_FORMAT || 'legacy').toLowerCase()
-    if (streamFormat === 'sse') {
+    if (isSSEFormat) {
       const sseStream = createSSEEventStream(wrappedAgent())
       return new Response(sseStream, {
         headers: {

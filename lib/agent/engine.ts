@@ -10,6 +10,7 @@ import { resolveSandboxPath } from '../sandbox/paths'
 
 export interface AgentProgressMeta {
   activity?: 'thinking' | `tool:${string}` | 'idle'
+  files?: Array<{ path: string; title: string }>
   runStatus?: {
     state: 'running' | 'completed' | 'failed'
     code?: string
@@ -38,7 +39,7 @@ export interface RunAgentOptions {
   capabilities?: ModelCapabilities
   onProgressSave?: (
     fullAssistantText: string,
-    toolCalls: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>,
+    toolCalls: Array<{ id?: string; toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>,
     meta?: AgentProgressMeta
   ) => Promise<void>
 }
@@ -74,7 +75,8 @@ export async function* runAgent(
   let turn = 0
   let totalToolCalls = 0
   let fullAssistantText = ''
-  const recordedToolCalls: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }> = []
+  const recordedToolCalls: Array<{ id?: string; toolName: string; status: 'running' | 'success' | 'failed'; output?: string }> = []
+  const recordedFiles: Array<{ path: string; title: string }> = []
 
   // Build initial message context with a single consolidated system message at index 0
   const historySystemTexts = history.filter((m) => m.role === 'system').map((m) => m.content)
@@ -157,10 +159,12 @@ export async function* runAgent(
 
       turn++
       yield { type: 'turn-start', turn }
+      yield { type: 'activity', activity: 'thinking' }
 
       if (onProgressSave) {
         await onProgressSave(fullAssistantText, recordedToolCalls, {
           activity: 'thinking',
+          files: recordedFiles,
           runStatus: { state: 'running' },
         }).catch(() => {})
       }
@@ -309,6 +313,7 @@ export async function* runAgent(
       if (onProgressSave) {
         await onProgressSave(fullAssistantText, recordedToolCalls, {
           activity: 'thinking',
+          files: recordedFiles,
           runStatus: { state: 'running' },
         }).catch(() => {})
       }
@@ -381,14 +386,18 @@ export async function* runAgent(
           executedToolsThisTurn++
 
           recordedToolCalls.push({
+            id: toolId,
             toolName,
             status: 'running',
           })
           const callIdx = recordedToolCalls.length - 1
 
+          yield { type: 'activity', activity: `tool:${toolName}` }
+
           if (onProgressSave) {
             await onProgressSave(fullAssistantText, recordedToolCalls, {
               activity: `tool:${toolName}`,
+              files: recordedFiles,
               runStatus: { state: 'running' },
             }).catch(() => {})
           }
@@ -403,6 +412,7 @@ export async function* runAgent(
           const outputSnippet = (toolResult.output || toolResult.error || 'Command executed successfully.').trim()
 
           recordedToolCalls[callIdx] = {
+            id: toolId,
             toolName,
             status,
             output: outputSnippet.slice(0, 4000),
@@ -426,26 +436,38 @@ export async function* runAgent(
             truncated: outputSnippet.length > 4000,
           }
 
+          const addRecordedFile = (filePath: string, fileTitle: string) => {
+            if (!recordedFiles.some((f) => f.path === filePath)) {
+              recordedFiles.push({ path: filePath, title: fileTitle })
+            }
+          }
+
           if (toolResult.presentedFiles && toolResult.presentedFiles.length > 0) {
             for (const pf of toolResult.presentedFiles) {
+              addRecordedFile(pf.path, pf.title)
               yield {
                 type: 'file',
                 path: pf.path,
                 title: pf.title,
               }
             }
-          } else if (toolName === 'present_files' && toolResult.filePath) {
+          } else if (toolResult.filePath && (toolName === 'present_files' || toolName === 'write_file' || toolName === 'create_file')) {
+            const fTitle = toolResult.fileTitle || path.basename(toolResult.filePath)
+            addRecordedFile(toolResult.filePath, fTitle)
             yield {
               type: 'file',
               path: toolResult.filePath,
-              title: toolResult.fileTitle || path.basename(toolResult.filePath),
+              title: fTitle,
             }
           }
+
+          yield { type: 'activity', activity: 'thinking' }
 
           // Invalidate/save progress with toolCall
           if (onProgressSave) {
             await onProgressSave(fullAssistantText, recordedToolCalls, {
               activity: 'thinking',
+              files: recordedFiles,
               runStatus: { state: 'running' },
             }).catch(() => {})
           }
@@ -472,7 +494,7 @@ export async function* runAgent(
         }
       }
 
-      // Check for non-existent file references in <file path="..."> tags
+      // Check for file references in <file path="..."> tags
       if (sandboxActive && !signal?.aborted) {
         const missingFiles: string[] = []
         const validFileTagRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi
@@ -485,11 +507,23 @@ export async function* runAgent(
             const fullPath = resolveSandboxPath(userEmail, chatId, targetPath)
             if (!fs.existsSync(fullPath)) {
               missingFiles.push(targetPath)
+            } else {
+              let rawTitle = (fileMatch[2] || '').trim() || path.basename(targetPath)
+              const wordCount = rawTitle.split(/\s+/).filter(Boolean).length
+              if (rawTitle.includes('\n') || wordCount > 5 || rawTitle.length > 60) {
+                rawTitle = path.basename(targetPath)
+              }
+              if (!recordedFiles.some((f) => f.path === targetPath)) {
+                recordedFiles.push({ path: targetPath, title: rawTitle })
+                yield { type: 'file', path: targetPath, title: rawTitle }
+              }
             }
           } catch {
             missingFiles.push(targetPath)
           }
         }
+        // Strip <file> tags from prose content when stored in schema:2
+        fullAssistantText = fullAssistantText.replace(validFileTagRegex, '').replace(/\n{3,}/g, '\n\n')
 
         if (missingFiles.length > 0) {
           for (const missingPath of missingFiles) {
@@ -534,30 +568,39 @@ export async function* runAgent(
       yield { type: 'text-delta', text: fallbackSummary }
     }
   } finally {
+    const isFailed =
+      doneReason === 'llm_error' ||
+      doneReason === 'max_turns' ||
+      doneReason === 'max_tool_calls' ||
+      doneReason === 'wall_clock'
+
+    const finalRunStatus = isFailed
+      ? {
+          state: 'failed' as const,
+          code: fatalErrorCode || doneReason.toUpperCase(),
+          userMessage: 'Proses gagal, coba lagi',
+          detail: fatalErrorDetail || `Run stopped: ${doneReason}`,
+        }
+      : {
+          state: 'completed' as const,
+        }
+
     if (onProgressSave) {
-      const isFailed =
-        doneReason === 'llm_error' ||
-        doneReason === 'max_turns' ||
-        doneReason === 'max_tool_calls' ||
-        doneReason === 'wall_clock'
-
-      const finalRunStatus = isFailed
-        ? {
-            state: 'failed' as const,
-            code: fatalErrorCode || doneReason.toUpperCase(),
-            userMessage: 'Proses gagal, coba lagi',
-            detail: fatalErrorDetail || `Run stopped: ${doneReason}`,
-          }
-        : {
-            state: 'completed' as const,
-          }
-
       await onProgressSave(fullAssistantText, recordedToolCalls, {
         activity: 'idle',
+        files: recordedFiles,
         runStatus: finalRunStatus,
       }).catch(() => {})
     }
 
+    yield { type: 'activity', activity: 'idle' }
+    yield {
+      type: 'run-status',
+      state: finalRunStatus.state,
+      code: (finalRunStatus as any).code,
+      userMessage: (finalRunStatus as any).userMessage,
+      detail: (finalRunStatus as any).detail,
+    }
     yield { type: 'done', reason: doneReason }
   }
 }

@@ -37,8 +37,16 @@ import {
   BookOpen
 } from 'lucide-react'
 
-type Chat = { id: string; title: string; systemPrompt: string; model: string; updatedAt?: string; isAgentRunning?: boolean }
-type Message = { id?: string; role: 'user' | 'assistant'; content: string }
+type Chat = { id: string; schema?: number; title: string; systemPrompt: string; model: string; updatedAt?: string; isAgentRunning?: boolean }
+type Message = {
+  id?: string
+  schema?: number
+  role: 'user' | 'assistant'
+  content: string
+  toolCalls?: Array<{ id?: string; toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>
+  files?: Array<{ path: string; title: string }>
+  runStatus?: { state: 'running' | 'completed' | 'failed'; code?: string; userMessage?: string; detail?: string } | null
+}
 type Usage = {
   used: string | number
   dailyLimit: string | number | null
@@ -606,11 +614,14 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
             setMessages((prev) =>
               data.messages.map((srvMsg: any, i: number) => {
                 const localMsg = prev[i]
+                const isSchema2 = srvMsg.schema === 2 || data.schema === 2 || localMsg?.schema === 2
                 const mergedContent =
                   srvMsg.content && srvMsg.content.trim().length > 0
                     ? srvMsg.content
                     : localMsg && localMsg.role === srvMsg.role && localMsg.content
-                      ? cleanAssistantContent(localMsg.content)
+                      ? isSchema2
+                        ? localMsg.content
+                        : cleanAssistantContent(localMsg.content)
                       : srvMsg.content || ''
                 return { ...localMsg, ...srvMsg, content: mergedContent }
               })
@@ -770,8 +781,8 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
     setAgentActivity('thinking')
     setRunStatus(null)
 
-    const userMessage = { role: 'user' as const, content: text }
-    const assistantMessage = { role: 'assistant' as const, content: '' }
+    const userMessage: Message = { role: 'user', content: text }
+    const assistantMessage: Message = { role: 'assistant', schema: 2, content: '', toolCalls: [], files: [] }
     setMessages((current) => [...current, userMessage, assistantMessage])
 
     try {
@@ -804,6 +815,9 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let answer = ''
+      let liveToolCalls: Array<{ id?: string; toolName: string; status: 'running' | 'success' | 'failed'; output?: string }> = []
+      let liveFiles: Array<{ path: string; title: string }> = []
+      let liveRunStatus: Message['runStatus'] = null
       const isSSE = response.headers.get('content-type')?.includes('text/event-stream')
       let sseBuffer = ''
 
@@ -835,15 +849,36 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                   answer += parsed.text
                 } else if (eventType === 'tool-call') {
                   setAgentActivity(`tool:${parsed.name}`)
-                  answer += `\n\n> 🛠️ **Executing Tool:** \`${parsed.name}\`...\n`
+                  liveToolCalls = [
+                    ...liveToolCalls,
+                    { id: parsed.id, toolName: parsed.name, status: 'running' },
+                  ]
                 } else if (eventType === 'tool-result') {
                   setAgentActivity('thinking')
-                  const icon = parsed.ok ? '✅' : '❌'
-                  const header = parsed.ok ? 'Output' : 'Execution Error'
                   const snippet = (parsed.output || 'Command executed successfully.').trim()
-                  answer += `\n> ${icon} **${header}:**\n\`\`\`\n${snippet.slice(0, 4000)}\n\`\`\`\n\n`
-                } else if (eventType === 'file') {
-                  answer += `<file path="${parsed.path}">${parsed.title}</file>`
+                  const status: 'success' | 'failed' = parsed.ok ? 'success' : 'failed'
+                  let updated = false
+                  liveToolCalls = liveToolCalls.map((tc) => {
+                    if (!updated && ((parsed.id && tc.id === parsed.id) || (!tc.id && tc.status === 'running'))) {
+                      updated = true
+                      return { ...tc, status, output: snippet.slice(0, 4000) }
+                    }
+                    return tc
+                  })
+                } else if (eventType === 'file' && parsed.path) {
+                  if (!liveFiles.some((f) => f.path === parsed.path)) {
+                    liveFiles = [...liveFiles, { path: parsed.path, title: parsed.title || parsed.path }]
+                  }
+                } else if (eventType === 'activity' && parsed.activity) {
+                  setAgentActivity(parsed.activity)
+                } else if (eventType === 'run-status' && parsed.state) {
+                  liveRunStatus = {
+                    state: parsed.state,
+                    code: parsed.code,
+                    userMessage: parsed.userMessage,
+                    detail: parsed.detail,
+                  }
+                  setRunStatus(liveRunStatus)
                 } else if (eventType === 'approval-required') {
                   setPendingApproval({
                     toolName: parsed.toolName || parsed.tool,
@@ -866,7 +901,20 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
         }
 
         setMessages((current) =>
-          current.map((item, index) => (index === current.length - 1 ? { ...item, content: answer } : item))
+          current.map((item, index) =>
+            index === current.length - 1
+              ? isSSE
+                ? {
+                    ...item,
+                    schema: 2,
+                    content: answer,
+                    toolCalls: liveToolCalls,
+                    files: liveFiles,
+                    runStatus: liveRunStatus ?? item.runStatus,
+                  }
+                : { ...item, content: answer }
+              : item
+          )
         )
       }
 
@@ -885,7 +933,21 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                       serverMsg.content && serverMsg.content.trim().length > 0
                         ? serverMsg.content
                         : prevMsg.content
-                    return { ...serverMsg, content: resolvedContent }
+                    const resolvedToolCalls =
+                      Array.isArray(serverMsg.toolCalls) && serverMsg.toolCalls.length > 0
+                        ? serverMsg.toolCalls
+                        : prevMsg.toolCalls
+                    const resolvedFiles =
+                      Array.isArray(serverMsg.files) && serverMsg.files.length > 0
+                        ? serverMsg.files
+                        : prevMsg.files
+                    return {
+                      ...serverMsg,
+                      schema: serverMsg.schema ?? prevMsg.schema,
+                      content: resolvedContent,
+                      toolCalls: resolvedToolCalls,
+                      files: resolvedFiles,
+                    }
                   }
                   return serverMsg
                 })
@@ -1411,47 +1473,71 @@ export function SuperChat({ initialChatId }: { initialChatId?: string }) {
                                 )
                               })()}
                               {(() => {
-                                const { cleanText: textAfterToolCleanup, toolCalls: parsedCalls } = parseToolCallsAndCleanContent(parsedContent || '')
+                                const isSchema2 = (message as any).schema === 2
                                 const existingCalls = (message as any).toolCalls || []
-                                const combinedToolCalls: any[] = []
-                                const maxLen = Math.max(existingCalls.length, parsedCalls.length)
-                                for (let i = 0; i < maxLen; i++) {
-                                  const ex = existingCalls[i]
-                                  const pc = parsedCalls[i]
-                                  if (pc && ex) {
-                                    const status = (pc.status === 'success' || pc.status === 'failed') ? pc.status : (ex.status || pc.status)
-                                    const output = pc.output || ex.output
-                                    combinedToolCalls.push({ ...ex, ...pc, status, output })
-                                  } else if (pc) {
-                                    combinedToolCalls.push(pc)
-                                  } else if (ex) {
-                                    combinedToolCalls.push(ex)
-                                  }
-                                }
+                                let combinedToolCalls: any[] = []
+                                let fileTags: Array<{ path: string; title: string }> = []
+                                let cleanContent = ''
 
-                                const fileTags: Array<{ path: string; title: string }> = []
-                                const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi
+                                if (isSchema2) {
+                                  combinedToolCalls = existingCalls
+                                  const structuredFiles = Array.isArray((message as any).files) ? [...(message as any).files] : []
+                                  const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi
+                                  let match
+                                  while ((match = fileRegex.exec(parsedContent || '')) !== null) {
+                                    const filePath = match[1] ? match[1].trim() : ''
+                                    if (!filePath) continue
+                                    let rawTitle = match[2] ? match[2].trim() : filePath
+                                    const wordCount = rawTitle.split(/\s+/).filter(Boolean).length
+                                    if (rawTitle.includes('\n') || wordCount > 5 || rawTitle.length > 60) {
+                                      rawTitle = filePath.split('/').pop() || filePath
+                                    }
+                                    if (!structuredFiles.some((f) => f.path === filePath)) {
+                                      structuredFiles.push({ path: filePath, title: rawTitle })
+                                    }
+                                  }
+                                  fileTags = structuredFiles
+                                  cleanContent = (parsedContent || '')
+                                    .replace(/<file(?:\s+path=["'][^"']*["'])?[^>]*>[\s\S]*?<\/file>|<file\s*\/?>/gi, '')
+                                    .trim()
+                                } else {
+                                  const { cleanText: textAfterToolCleanup, toolCalls: parsedCalls } = parseToolCallsAndCleanContent(parsedContent || '')
+                                  const maxLen = Math.max(existingCalls.length, parsedCalls.length)
+                                  for (let i = 0; i < maxLen; i++) {
+                                    const ex = existingCalls[i]
+                                    const pc = parsedCalls[i]
+                                    if (pc && ex) {
+                                      const status = (pc.status === 'success' || pc.status === 'failed') ? pc.status : (ex.status || pc.status)
+                                      const output = pc.output || ex.output
+                                      combinedToolCalls.push({ ...ex, ...pc, status, output })
+                                    } else if (pc) {
+                                      combinedToolCalls.push(pc)
+                                    } else if (ex) {
+                                      combinedToolCalls.push(ex)
+                                    }
+                                  }
+
+                                  const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi
+                                  cleanContent = textAfterToolCleanup.replace(/<file(?:\s+path=["']\s*["'])?\s*>[\s\S]*?<\/file>|<file\s*\/?>/gi, '')
+                                  let match
+                                  while ((match = fileRegex.exec(textAfterToolCleanup)) !== null) {
+                                    const filePath = match[1] ? match[1].trim() : ''
+                                    if (!filePath) continue
+                                    let rawTitle = match[2] ? match[2].trim() : filePath
+                                    const wordCount = rawTitle.split(/\s+/).filter(Boolean).length
+                                    if (rawTitle.includes('\n') || wordCount > 5 || rawTitle.length > 60) {
+                                      rawTitle = filePath.split('/').pop() || filePath
+                                    }
+                                    fileTags.push({ path: filePath, title: rawTitle })
+                                  }
+                                  cleanContent = cleanContent.replace(fileRegex, '').trim()
+                                }
 
                                 const isLastMessage = index === messages.length - 1
                                 const isBusy = isLastMessage && (isAgentRunning || (agentActivity !== undefined && agentActivity !== 'idle'))
                                 const activeActivityLabel = isBusy ? (agentActivity && agentActivity !== 'idle' ? agentActivity : 'thinking') : null
                                 const hasRunningToolCard = combinedToolCalls.some((t: any) => t.status === 'running')
                                 const msgRunStatus = (message as any).runStatus || (isLastMessage ? runStatus : undefined)
-                                let cleanContent = textAfterToolCleanup
-                                // Strip bare or malformed <file> tags without path
-                                cleanContent = cleanContent.replace(/<file(?:\s+path=["']\s*["'])?\s*>[\s\S]*?<\/file>|<file\s*\/?>/gi, '')
-                                let match
-                                while ((match = fileRegex.exec(textAfterToolCleanup)) !== null) {
-                                  const filePath = match[1] ? match[1].trim() : ''
-                                  if (!filePath) continue
-                                  let rawTitle = match[2] ? match[2].trim() : filePath
-                                  const wordCount = rawTitle.split(/\s+/).filter(Boolean).length
-                                  if (rawTitle.includes('\n') || wordCount > 5 || rawTitle.length > 60) {
-                                    rawTitle = filePath.split('/').pop() || filePath
-                                  }
-                                  fileTags.push({ path: filePath, title: rawTitle })
-                                }
-                                cleanContent = cleanContent.replace(fileRegex, '').trim()
 
                                 return (
                                   <>

@@ -12,15 +12,18 @@ export type ActivityState = 'thinking' | `tool:${string}` | 'idle'
 
 export type MessageItem = {
   id?: string
+  schema?: number
   role: 'user' | 'assistant' | 'system'
   content: string
   createdAt?: string
-  toolCalls?: Array<{ toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>
+  toolCalls?: Array<{ id?: string; toolName: string; status: 'running' | 'success' | 'failed'; output?: string }>
+  files?: Array<{ path: string; title: string }>
   runStatus?: RunStatus | null
 }
 
 export type ChatData = {
   id: string
+  schema?: number
   userEmail: string
   title: string
   systemPrompt: string
@@ -110,6 +113,7 @@ export function createChatFile(
   const messages = options.initialMessage ? [options.initialMessage] : []
   const chat: ChatData = {
     id,
+    schema: 2,
     userEmail: userEmail.trim().toLowerCase(),
     title: options.title || 'New conversation',
     systemPrompt: options.systemPrompt || '',

@@ -9,6 +9,14 @@ export type AgentEvent =
   | { type: 'tool-call'; id: string; name: string; args: unknown }
   | { type: 'tool-result'; id: string; ok: boolean; output: string; durationMs?: number; truncated?: boolean }
   | { type: 'file'; path: string; title: string }
+  | { type: 'activity'; activity: 'thinking' | `tool:${string}` | 'idle' }
+  | {
+      type: 'run-status'
+      state: 'running' | 'completed' | 'failed'
+      code?: string
+      userMessage?: string
+      detail?: string
+    }
   | {
       type: 'approval-required'
       id?: string

@@ -30,6 +30,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
     return NextResponse.json({
       id: chat.id,
+      schema: chat.schema,
       title: chat.title,
       messages: chat.messages,
       isAgentRunning: Boolean(chat.isAgentRunning),
