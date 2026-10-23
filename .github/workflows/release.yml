@@ -127,18 +127,8 @@ jobs:
           FULL_SHA256=$(sha256sum "${FULL_ARCHIVE}" | awk '{print $1}')
           BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          cat <<EOF > update-manifest.json
-{
-  "version": "${TAG_NAME#v}",
-  "tagName": "${TAG_NAME}",
-  "previousTag": "${PREV_TAG}",
-  "fullArchive": "${FULL_ARCHIVE}",
-  "updateArchive": "${UPDATE_ARCHIVE}",
-  "updateSha256": "${UPDATE_SHA256}",
-  "fullSha256": "${FULL_SHA256}",
-  "publishedAt": "${BUILD_TIME}"
-}
-EOF
+          printf '{\n  "version": "%s",\n  "tagName": "%s",\n  "previousTag": "%s",\n  "fullArchive": "%s",\n  "updateArchive": "%s",\n  "updateSha256": "%s",\n  "fullSha256": "%s",\n  "publishedAt": "%s"\n}\n' \
+            "${TAG_NAME#v}" "${TAG_NAME}" "${PREV_TAG}" "${FULL_ARCHIVE}" "${UPDATE_ARCHIVE}" "${UPDATE_SHA256}" "${FULL_SHA256}" "${BUILD_TIME}" > update-manifest.json
 
           echo "FULL_ARCHIVE=${FULL_ARCHIVE}" >> $GITHUB_ENV
           echo "UPDATE_ARCHIVE=${UPDATE_ARCHIVE}" >> $GITHUB_ENV
